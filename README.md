@@ -1,0 +1,128 @@
+# 🎬 Moufloster - Générateur de Posters TheMovieDB
+
+Interface web manuelle pour télécharger et personnaliser des posters de films/séries depuis TheMovieDB, avec support des calques personnalisés (cadre blanc, dégradé noir, textes).
+
+Pour l'installation sur le serveur, le déploiement automatique et la
+reconstruction complète après une migration/panne, voir [`INSTALL.md`](INSTALL.md).
+
+## ✨ Fonctionnalités
+
+- 🔍 **Recherche TheMovieDB** : Cherche films/séries, affiche les résultats
+- 🖼️ **Sélection de posters** : Affiche les posters sans langue, choix manuel
+- 🎨 **Personnalisation des calques** :
+  - Cadre blanc (Anime 60px ou Standard 40px)
+  - Gradient noir transparent
+  - 5 couches de texte configurable (49px et 89px)
+  - Numéro de saison/épisode
+- 👁️ **Aperçu en temps réel** : Vois le résultat immédiatement
+- 💾 **Sauvegarde JPEG** : Exporte tes posters personnalisés (1000×1500 px)
+
+## 📋 Prérequis
+
+- Python 3.8+
+- Compte gratuit TheMovieDB (pour l'API)
+- Connexion Internet
+
+## 🚀 Installation
+
+### 1. Clone le repo
+```bash
+git clone https://github.com/mouflo/moufloster.git
+cd moufloster
+```
+
+### 2. Installe les dépendances
+```bash
+pip install -r requirements.txt
+```
+
+### 3. Configure ta clé TheMovieDB
+```bash
+export TMDB_API_KEY="ta-clé-api-ici"
+export OUTPUT_DIR="/chemin/vers/sortie"
+```
+
+[Obtenir une clé](https://www.themoviedb.org/settings/api) (gratuit)
+
+### 4. Lance l'appli
+```bash
+python app.py
+```
+
+Ouvre http://localhost:5000 🎉
+
+## 💡 Utilisation
+
+1. **Recherche** → Tape un titre
+2. **Sélection** → Clique sur un résultat, puis choisis un poster
+3. **Perso** → Active les calques et configure le texte via les checkboxes
+4. **Aperçu** → Vois le résultat en temps réel
+5. **Save** → Clique "Sauvegarder"
+
+## 📐 Spécifications
+
+| Paramètre | Valeur |
+|-----------|--------|
+| Largeur | 1000 px |
+| Hauteur | 1500 px |
+| Police petite | 49 px |
+| Police grande | 89 px |
+| Cadre Anime | 60 px |
+| Cadre Standard | 40 px |
+| Format sortie | JPEG 95% qualité |
+
+## 🔧 Configuration avancée
+
+Modifie les constantes dans `app.py` :
+```python
+TMDB_API_KEY = "ta-clé"
+OUTPUT_BASE = "/dossier/sortie"
+MEDIATHEQUE_DIR = "/chemin/mediatheque"  # Pour intégration future
+```
+
+## 📂 Structure
+
+```
+moufloster/
+├── app.py              # Application Flask principale
+├── requirements.txt    # Dépendances Python
+├── README.md          # Ce fichier
+└── .gitignore         # Git ignore rules
+```
+
+## 🐛 Dépannage
+
+**Port 5000 utilisé ?**
+```python
+# Modifie dans app.py :
+app.run(port=8000)  # Autre port
+```
+
+**Pas de posters ?**
+- Vérifie ta clé TMDB
+- Essaye avec un titre populaire ("Dune", "Breaking Bad")
+
+**Module not found ?**
+```bash
+pip install --upgrade flask pillow requests
+```
+
+## 🗺️ Feuille de route
+
+- [ ] Auto-classification dans Emby/Jellyfin
+- [ ] Batch processing (plusieurs posters)
+- [ ] Polices personnalisées
+- [ ] Historique des posters générés
+- [ ] Presets/templates
+
+## 📝 Licence
+
+Libre d'utilisation. Images de TheMovieDB (usage non-commercial).
+
+---
+
+**Besoin d'aide ?** Ouvre une issue ou demande à Claude ! 🤖
+
+---
+
+*Similar to MouFlanimeXer but focused on poster generation with manual controls.*
