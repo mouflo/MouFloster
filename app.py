@@ -126,6 +126,8 @@ def _set_tmdb_key(key):
 
 import tmdb_settings
 tmdb_settings.init_app(app, BASE_DIR, _set_tmdb_key)
+import settings_page
+settings_page.init_app(app, BASE_DIR, lambda: APP_VERSION, lambda: {"library": str(library.LIBRARY_ROOT), "output": OUTPUT_BASE})
 
 # ============================================================================
 # TMDB Functions
@@ -1554,7 +1556,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <div id="mou-header" data-app="moufloster" data-prefix="MouFl" data-rest="oster" data-version="{{ version }}" data-emby="1" data-tmdb="1"
+        <div id="mou-header" data-app="moufloster" data-prefix="MouFl" data-rest="oster" data-version="{{ version }}" data-settings="1"
              data-sub="Posters personnalisés avec TheMovieDB, cadre, dégradé et textes"
              data-actions='[{"label":"🧠 Relancer l&#39;installation de LaMa","url":"/api/lama/retry"}]'></div>
 

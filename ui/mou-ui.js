@@ -32,8 +32,9 @@
     var header = document.createElement('header'); header.className = 'mou-header';
     header.innerHTML =
       '<div class="mou-actions">' + (d.version ? '<span class="mou-ver">' + esc(d.version) + '</span>' : '') +
-      (d.emby ? '<button type="button" class="mou-btn ghost small" id="mouKeyOpen">🔑 Clé Emby</button>' : '') +
-      (d.tmdb ? '<button type="button" class="mou-btn ghost small" id="mouTmdbOpen">🔑 Clé TMDB</button>' : '') +
+      (d.settings ? '<a class="mou-btn ghost small" href="/reglages" id="mouSettingsOpen" style="text-decoration:none">⚙️ Réglages</a>' : '') +
+      (d.emby && !d.settings ? '<button type="button" class="mou-btn ghost small" id="mouKeyOpen">🔑 Clé Emby</button>' : '') +
+      (d.tmdb && !d.settings ? '<button type="button" class="mou-btn ghost small" id="mouTmdbOpen">🔑 Clé TMDB</button>' : '') +
       '<button type="button" class="mou-btn ghost small" id="mouLogOpen">🩺 Journal</button>' +
       '<form method="post" action="/logout"><button type="submit" class="mou-btn ghost small">Se déconnecter</button></form></div>' +
       '<h1 class="mou-title"><img src="/icons/' + esc(app) + '.svg" alt=""><span><span class="w">' + esc(d.prefix || 'MouFl') + '</span><span class="g">' + esc(d.rest || '') + '</span></span></h1>' +
@@ -91,8 +92,8 @@
       });
       $(id + 'Close').addEventListener('click', function () { close(key); });
     }
-    if (d.emby) keyModal('Emby', '🔑 Clé API Emby', '/api/settings/emby', 'mouKeyOpen');
-    if (d.tmdb) keyModal('Tmdb', '🔑 Clé API TheMovieDB', '/api/settings/tmdb', 'mouTmdbOpen');
+    if (d.emby && !d.settings) keyModal('Emby', '🔑 Clé API Emby', '/api/settings/emby', 'mouKeyOpen');
+    if (d.tmdb && !d.settings) keyModal('Tmdb', '🔑 Clé API TheMovieDB', '/api/settings/tmdb', 'mouTmdbOpen');
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') document.querySelectorAll('.mou-modal.show').forEach(close); });
   }
 

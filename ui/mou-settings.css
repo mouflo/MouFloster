@@ -1,0 +1,41 @@
+/* MouFlux · page ⚙️ Réglages : même aspect dans les trois applis (fichier identique dans les trois dépôts) */
+    body { padding:16px; }
+    .container { max-width:760px; margin:0 auto; }
+    button, select, input { font:inherit; }
+    .btn { padding:9px 16px; border:0; border-radius:4px; background:var(--accent); color:#fff; font-weight:600; cursor:pointer; }
+    .btn:hover { background:var(--accent-hover); }
+    .btn.ghost { background:var(--field); color:var(--text); font-weight:500; }
+    .btn.ghost:hover { background:#383838; }
+    .panel { background:var(--card); border-radius:8px; padding:16px; margin-bottom:16px; }
+    .panel h2 { margin:0 0 4px; font-size:1.1rem; }
+    .panel .sub { color:var(--muted); font-size:.88rem; margin-bottom:12px; }
+    .field { display:flex; flex-direction:column; gap:4px; margin-bottom:12px; }
+    .field label { font-size:.85rem; color:var(--muted); }
+    .field input[type=text], .field input[type=password], .field select { background:var(--field); color:var(--text); border:1px solid var(--line); border-radius:4px; padding:10px; outline:none; width:100%; box-sizing:border-box; }
+    .field input:focus { border-color:var(--accent); }
+    .row { display:flex; gap:8px; flex-wrap:wrap; }
+    .row.nowrap { flex-wrap:nowrap; } .row.nowrap input { flex:1; min-width:0; }
+    .frow { display:flex; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--line); flex-wrap:wrap; }
+    .frow input[type=checkbox] { width:18px; height:18px; accent-color:var(--accent); flex:none; }
+    .frow .fn { flex:1 1 180px; min-width:0; overflow-wrap:anywhere; }
+    .frow .fn small { display:block; color:var(--muted); }
+    .frow select { background:var(--field); color:var(--text); border:1px solid var(--line); border-radius:4px; padding:8px; }
+    .frow.off .fn { opacity:.55; }
+    .modalbg { position:fixed; inset:0; background:rgba(0,0,0,.65); display:none; align-items:center; justify-content:center; z-index:50; padding:12px; }
+    .modalbg.show { display:flex; }
+    .modalbox { background:var(--card); border-radius:10px; padding:16px; width:min(560px,100%); max-height:85vh; display:flex; flex-direction:column; gap:10px; }
+    .modalbox .cur { font-family:monospace; font-size:.85rem; overflow-wrap:anywhere; background:var(--field); border-radius:4px; padding:8px; }
+    .dirs { overflow-y:auto; border:1px solid var(--line); border-radius:6px; min-height:180px; }
+    .dirs div { padding:10px 12px; cursor:pointer; border-bottom:1px solid var(--line); }
+    .dirs div:hover { background:var(--field); }
+    .note { padding:10px 12px; border-radius:4px; font-size:.9rem; margin:10px 0 0; }
+    .note.ok { background:rgba(82,181,75,.15); border:1px solid var(--accent); color:#c9efc5; }
+    .note.err { background:rgba(229,83,75,.15); border:1px solid var(--err); color:#ffb4ae; }
+    .note.warn { background:rgba(229,168,75,.15); border:1px solid var(--warn); color:#f3d9a8; }
+    .state { font-size:.85rem; color:var(--muted); margin-bottom:8px; }
+    .check { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+    .check input { width:17px; height:17px; accent-color:var(--accent); }
+    .tabsinfo { font-size:.88rem; color:var(--muted); line-height:1.6; }
+    .tabsinfo b { color:var(--text); }
+    .back { display:inline-block; margin-bottom:12px; color:var(--muted); text-decoration:none; }
+    @media (max-width:800px) { .row.nowrap .btn { flex:0 0 auto; padding:12px 14px; } .row.nowrap input { flex:1 1 0; } body { padding:10px; } .field input, .field select { font-size:16px; } .row .btn { flex:1 1 100%; padding:12px; } }

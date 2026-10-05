@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Réglages · MouFloster</title>
+<link rel="icon" type="image/svg+xml" href="/icons/moufloster.svg"><link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png"><link rel="apple-touch-icon" href="/icons/apple-touch-icon.png"><link rel="manifest" href="/icons/manifest.webmanifest"><meta name="theme-color" content="#121315">
+<link rel="stylesheet" href="/ui/mou-ui.css?v={{ version|urlencode }}">
+<script src="/ui/mou-ui.js?v={{ version|urlencode }}" defer></script>
+<link rel="stylesheet" href="/ui/mou-settings.css?v={{ version|urlencode }}">
+<script src="/ui/mou-settings.js?v={{ version|urlencode }}"></script>
+</head>
+<body>
+<div class="container">
+    <div id="mou-header" data-app="moufloster" data-prefix="MouFl" data-rest="oster" data-version="{{ version }}" data-sub="Réglages"></div>
+    <a class="back" href="/">← Retour aux posters</a>
+
+    <div class="panel">
+        <h2>🎬 Emby</h2>
+        <div class="sub">L'adresse de ton serveur Emby et sa clé API (Emby → Tableau de bord → Clés API). Sert à actualiser seulement le film ou la série dont tu viens de changer le poster.</div>
+        <div class="field"><label for="embyHost">Adresse</label><input type="text" id="embyHost" placeholder="http://192.168.1.134:8096" autocapitalize="off" spellcheck="false"></div>
+        <div class="row"><button class="btn" id="embyHostSave">Enregistrer l'adresse</button></div>
+        <div id="embyHostMsg"></div>
+        <div class="state" id="embyKeyState" style="margin-top:14px"></div>
+        <div class="field"><label for="embyKey">Clé API</label><input type="password" id="embyKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Colle la nouvelle clé ici"></div>
+        <div class="row"><button class="btn ghost" id="embyKeyTest">Tester</button><button class="btn" id="embyKeySave">Enregistrer la clé</button></div>
+        <div id="embyKeyMsg"></div>
+    </div>
+
+    <div class="panel">
+        <h2>🎞️ TheMovieDB</h2>
+        <div class="sub">Sert à chercher les affiches (clé « API » de 32 caractères, ou « jeton d'accès » qui commence par eyJ).</div>
+        <div class="state" id="tmdbKeyState"></div>
+        <div class="field"><label for="tmdbKey">Clé API</label><input type="password" id="tmdbKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Colle la nouvelle clé ici"></div>
+        <div class="row"><button class="btn ghost" id="tmdbKeyTest">Tester</button><button class="btn" id="tmdbKeySave">Enregistrer la clé</button></div>
+        <div id="tmdbKeyMsg"></div>
+    </div>
+
+    <div class="panel">
+        <h2>📁 Dossiers</h2>
+        <div class="sub">Où se trouve ta médiathèque et où ranger les posters créés. L'appli redémarre après l'enregistrement (quelques secondes).</div>
+        <div class="field"><label for="pathLibrary">Dossier de la médiathèque</label>
+            <div class="row nowrap"><input type="text" id="pathLibrary" autocapitalize="off" spellcheck="false" placeholder="/mnt/mouflosyno/Emby-Media"><button class="btn ghost" data-browse="pathLibrary">📂 Parcourir</button></div></div>
+        <div class="field"><label for="pathOutput">Dossier des posters créés</label>
+            <div class="row nowrap"><input type="text" id="pathOutput" autocapitalize="off" spellcheck="false" placeholder="/mnt/mouflosyno/MouFloster"><button class="btn ghost" data-browse="pathOutput">📂 Parcourir</button></div></div>
+        <div class="tabsinfo" id="pathsInfo"></div>
+        <div class="row" style="margin-top:12px"><button class="btn" id="pathsSave">Enregistrer et redémarrer</button></div>
+        <div id="pathsMsg"></div>
+    </div>
+</div>
+<script>
+async function loadPaths() {
+    const p = await api('/api/settings/paths');
+    $('embyHost').value = p.emby_host || ''; $('pathLibrary').value = p.library || ''; $('pathOutput').value = p.output || '';
+    $('pathsInfo').innerHTML = `📚 Médiathèque : ${p.library_ok ? 'accessible' : '⚠️ introuvable'}<br>🖼️ Posters : ${p.output_ok ? 'accessible' : '⚠️ introuvable'}`;
+}
+simpleSave('embyHostSave', 'embyHostMsg', '/api/settings/emby-host', () => ({host: $('embyHost').value}));
+$('pathsSave').addEventListener('click', async () => {
+    if (!confirm('Enregistrer ces dossiers ? L\'appli va redémarrer (quelques secondes) ; un traitement en cours serait interrompu.')) return;
+    const r = await post('/api/settings/paths', {library: $('pathLibrary').value, output: $('pathOutput').value});
+    if (!r.ok) return say('pathsMsg', r.error, false);
+    say('pathsMsg', r.message, 'warn');
+    for (let i = 0; i < 40; i++) { await new Promise(res => setTimeout(res, 2000)); try { const x = await fetch('/api/settings/paths'); if (x.ok) { await loadPaths(); return say('pathsMsg', 'Dossiers relus.', true); } } catch (e) {} }
+    say('pathsMsg', 'L\'appli met longtemps à revenir : recharge la page dans un instant.', 'warn');
+});
+keyForm('emby', '/api/settings/emby'); keyForm('tmdb', '/api/settings/tmdb'); loadPaths();
+</script>
+</body>
+</html>
