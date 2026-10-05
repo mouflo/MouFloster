@@ -188,6 +188,17 @@ def search_tmdb(query: str):
             }
             results.append(result)
 
+        # Sagas (collections TMDB : « Harry Potter - Saga »…) : absentes de la recherche « multi », cherchées à part
+        try:
+            r2 = tmdb_get("https://api.themoviedb.org/3/search/collection", {"query": query, "language": "fr-FR"})
+            if r2.ok:
+                for item in r2.json().get("results", [])[:5]:
+                    if item.get("id") and item.get("name"):
+                        results.append({"id": item["id"], "title": item["name"], "year": "?", "media_type": "collection",
+                                        "original_title": item.get("original_name") or ""})
+        except Exception as e:
+            logger.warning(f"Recherche des sagas TMDB impossible: {diag.redact(str(e))}")
+
         return {"results": results}
     except Exception as e:
         logger.error(f"Erreur TMDB search: {diag.redact(str(e))}")
@@ -196,7 +207,7 @@ def search_tmdb(query: str):
 
 def get_posters_for_item(tmdb_id: str, media_type: str):
     """Récupère TOUS les posters (toutes langues) d'un film/série, avec leur langue"""
-    if media_type not in ("movie", "tv") or not str(tmdb_id).isdigit():
+    if media_type not in ("movie", "tv", "collection") or not str(tmdb_id).isdigit():
         return {"error": "Titre invalide"}
     url = f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}/images"
     try:
@@ -783,6 +794,74 @@ def api_download(filename):
 # ============================================================================
 
 BACKUP_ROOT = os.path.join(OUTPUT_BASE, "_anciens-posters")
+
+
+# ---------- Sagas : l'affiche est envoyée directement à Emby (pas de dossier dans la médiathèque) ----------
+
+@app.route("/api/saga/match", methods=["POST"])
+def api_saga_match():
+    data = request.get_json(silent=True) or {}
+    if not emby.configured():
+        return jsonify({"error": "Emby n'est pas configuré : ajoute sa clé API dans ⚙️ Réglages."}), 400
+    title = str(data.get("title") or "").strip()
+    q = str(data.get("q") or "").strip()
+    # « Harry Potter - Saga » chez TMDB, souvent « Harry Potter Collection » ou « Harry Potter » chez Emby
+    base = re.sub(r"\s*[-–:]?\s*(saga|collection|la collection|trilogie|trilogy)\s*$", "", title, flags=re.I).strip()
+    terms = [q] if q else [title, base, str(data.get("original_title") or "").strip()]
+    try:
+        cands = emby.find_boxsets(None if q else _to_int(data.get("tmdb_id")), terms)
+    except emby.EmbyError as e:
+        return jsonify({"error": str(e)}), 502
+    for c in cands:
+        c["score"] = 1.0 if c["sure"] else max(library.difflib.SequenceMatcher(None, library.fold(t), library.fold(c["name"])).ratio() for t in terms if t)
+    cands.sort(key=lambda c: -c["score"])
+    sel = cands[0]["id"] if cands and cands[0]["score"] >= 0.6 else (cands[0]["id"] if cands else None)
+    return jsonify({"candidates": cands, "selected": sel, "sure": bool(cands and cands[0]["sure"])})
+
+
+@app.route("/api/saga/image/<item_id>")
+def api_saga_image(item_id):
+    if not re.fullmatch(r"[0-9a-fA-F]{1,64}", item_id or ""):
+        return jsonify({"error": "Identifiant invalide"}), 400
+    img = emby.get_primary_image(item_id)
+    if not img:
+        return jsonify({"error": "Pas d'affiche"}), 404
+    resp = app.response_class(img, mimetype="image/jpeg")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/api/saga/apply", methods=["POST"])
+def api_saga_apply():
+    data = request.get_json(silent=True) or {}
+    item_id = str(data.get("item_id") or "")
+    name = str(data.get("name") or "saga")
+    saved = os.path.join(OUTPUT_BASE, os.path.basename(str(data.get("saved_filename") or "")))
+    if not re.fullmatch(r"[0-9a-fA-F]{1,64}", item_id):
+        return jsonify({"error": "Choisis la collection Emby"}), 400
+    if not os.path.isfile(saved):
+        return jsonify({"error": "Poster sauvegardé introuvable"}), 404
+    backup = None
+    try:
+        old = emby.get_primary_image(item_id)
+        if old:                                   # l'ancienne affiche est gardée avant d'être remplacée
+            folder = os.path.join(BACKUP_ROOT, "_sagas", re.sub(r"[^\w .()-]+", "_", name).strip() or item_id)
+            os.makedirs(folder, exist_ok=True)
+            backup = os.path.join(folder, f"poster.{datetime.now():%Y%m%d-%H%M%S}.jpg")
+            n = 2
+            while os.path.exists(backup):
+                backup = os.path.join(folder, f"poster.{datetime.now():%Y%m%d-%H%M%S}-{n}.jpg")
+                n += 1
+            with open(backup, "wb") as f:
+                f.write(old)
+        with open(saved, "rb") as f:
+            emby.set_primary_image(item_id, f.read())
+    except emby.EmbyError as e:
+        return jsonify({"error": f"Emby a refusé l'affiche : {e}"}), 502
+    except OSError as e:
+        return jsonify({"error": f"Sauvegarde de l'ancienne affiche impossible ({e.strerror or e}) : rien n'a été remplacé"}), 500
+    logger.info(f"🖼️ Affiche de la saga « {name} » remplacée dans Emby" + (f" (ancienne : {backup})" if backup else ""))
+    return jsonify({"ok": True, "backup": backup, "message": f"Affiche de « {name} » remplacée dans Emby" + (" (ancienne affiche sauvegardée)" if backup else "")})
 
 
 def _to_int(value):
@@ -1757,6 +1836,33 @@ HTML_TEMPLATE = """
     </div>
 
     <!-- Fenêtre: envoi vers la médiathèque -->
+    <div class="modal-overlay" id="sagaModal">
+        <div class="modal">
+            <div class="modal-head">
+                <div>
+                    <h3>📚 Envoyer l'affiche de la saga dans Emby</h3>
+                    <div class="modal-sub" id="sagaTitle"></div>
+                </div>
+                <button class="modal-close" onclick="closeSaga()" aria-label="Fermer">✕</button>
+            </div>
+            <div class="lib-status" id="sagaStatus"></div>
+            <div class="lib-field">
+                <label for="sagaSelect">Collection dans Emby</label>
+                <select id="sagaSelect" onchange="sagaShowOld()"></select>
+                <div class="lib-search">
+                    <input type="text" id="sagaSearch" placeholder="Autre collection : tape un nom..." onkeypress="if (event.key === 'Enter') sagaFind(this.value)" />
+                    <button class="secondary" onclick="sagaFind(document.getElementById('sagaSearch').value)">Chercher</button>
+                </div>
+            </div>
+            <div class="modal-sub">Une saga n'a pas de dossier dans la médiathèque : Emby garde son affiche lui-même. L'appli la remplace directement dans Emby (l'ancienne est sauvegardée).</div>
+            <div class="lib-compare">
+                <figure><div class="frame" id="sagaOldFrame"></div><figcaption><b>Actuelle</b><br>dans Emby</figcaption></figure>
+                <figure><div class="frame"><img id="sagaNewImg" alt="Nouvelle affiche" /></div><figcaption><b>Nouvelle</b><br>celle que tu viens de créer</figcaption></figure>
+            </div>
+            <div class="lib-actions"><button id="sagaApply" onclick="sagaApply()">🖼️ Remplacer l'affiche dans Emby</button><button class="secondary" onclick="closeSaga()">Annuler</button></div>
+        </div>
+    </div>
+
     <div class="modal-overlay" id="libModal">
         <div class="modal">
             <div class="modal-head">
@@ -1943,7 +2049,7 @@ HTML_TEMPLATE = """
                 data.results.forEach(item => {
                     const div = document.createElement('div');
                     div.className = 'result-item';
-                    div.textContent = item.title + (item.year !== '?' ? ` (${item.year})` : '');
+                    div.textContent = (item.media_type === 'collection' ? '📚 ' : '') + item.title + (item.year !== '?' ? ` (${item.year})` : '') + (item.media_type === 'collection' ? ' · saga' : '');
                     div.addEventListener('click', () => {
                         // clic sur le titre déjà choisi (liste refermée): on rouvre la liste pour en changer
                         if (div.classList.contains('active') && resultsDiv.classList.contains('collapsed')) {
@@ -2364,7 +2470,65 @@ HTML_TEMPLATE = """
         async function sendToLibrary() {
             const data = await saveToServer();
             if (!data) return;
-            openLibrary(data.filename);
+            if (selectedItem && selectedItem.media_type === 'collection') openSaga(data.filename);   // saga : directement dans Emby
+            else openLibrary(data.filename);
+        }
+
+        // ===== Sagas : l'affiche est envoyée directement à Emby (collection) =====
+        let sagaState = {saved: null, cands: []};
+        function sagaStatus(msg, kind) { const el = document.getElementById('sagaStatus'); el.textContent = msg; el.className = 'lib-status' + (kind ? ' ' + kind : ''); }
+        function sagaFill(cands, selected) {
+            sagaState.cands = cands;
+            const sel = document.getElementById('sagaSelect'); sel.innerHTML = '';
+            cands.forEach(c => { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name + (c.sure ? '  ✓' : (c.score < 1 ? '  (' + Math.round(c.score * 100) + '%)' : '')); sel.appendChild(o); });
+            if (selected) sel.value = selected;
+            sagaShowOld();
+        }
+        function sagaShowOld() {
+            const id = document.getElementById('sagaSelect').value, frame = document.getElementById('sagaOldFrame');
+            document.getElementById('sagaApply').disabled = !id;
+            if (!id) { frame.innerHTML = '<div class="empty">Aucune collection choisie</div>'; return; }
+            const img = document.createElement('img'); img.alt = 'Affiche actuelle';
+            img.onerror = () => { frame.innerHTML = '<div class="empty">Pas encore d’affiche dans Emby</div>'; };
+            img.src = '/api/saga/image/' + encodeURIComponent(id) + '?t=' + Date.now();
+            frame.innerHTML = ''; frame.appendChild(img);
+        }
+        async function sagaFind(q) {
+            sagaStatus('Recherche de la collection dans Emby...');
+            try {
+                const res = await fetch('/api/saga/match', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({tmdb_id: selectedItem.id, title: selectedItem.title, original_title: selectedItem.original_title || '', q: q || ''})});
+                const data = await res.json();
+                if (data.error) { sagaFill([], null); return sagaStatus('❌ ' + data.error, 'err'); }
+                sagaFill(data.candidates || [], data.selected);
+                if (!(data.candidates || []).length) sagaStatus('⚠️ Aucune collection trouvée dans Emby. Vérifie qu’elle existe (Emby → collections), ou cherche-la par son nom ci-dessous.', 'warn');
+                else if (data.sure) sagaStatus('✅ Collection trouvée. Vérifie puis confirme.', 'ok');
+                else sagaStatus('⚠️ Vérifie que c’est la bonne collection, ou cherche-en une autre ci-dessous.', 'warn');
+            } catch (err) { sagaStatus('❌ ' + err.message, 'err'); }
+        }
+        function openSaga(savedFilename) {
+            sagaState = {saved: savedFilename, cands: []};
+            document.getElementById('sagaTitle').textContent = selectedItem.title + ' · saga';
+            document.getElementById('sagaNewImg').src = '/api/download/' + encodeURIComponent(savedFilename) + '?inline=1&t=' + Date.now();
+            document.getElementById('sagaSearch').value = '';
+            document.getElementById('sagaModal').classList.add('show');
+            document.body.style.overflow = 'hidden';
+            sagaFind('');
+        }
+        function closeSaga() { document.getElementById('sagaModal').classList.remove('show'); document.body.style.overflow = ''; }
+        async function sagaApply() {
+            const id = document.getElementById('sagaSelect').value; if (!id) return;
+            const c = sagaState.cands.find(x => x.id === id) || {name: selectedItem.title};
+            document.getElementById('sagaApply').disabled = true;
+            sagaStatus('Envoi de l’affiche à Emby...');
+            try {
+                const res = await fetch('/api/saga/apply', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({saved_filename: sagaState.saved, item_id: id, name: c.name})});
+                const data = await res.json();
+                if (data.error) { document.getElementById('sagaApply').disabled = false; return sagaStatus('❌ ' + data.error, 'err'); }
+                closeSaga();
+                showMessage('✅ ' + data.message + ' · ton poster est aussi conservé : ' + sagaState.saved, 'success');
+            } catch (err) { document.getElementById('sagaApply').disabled = false; sagaStatus('❌ ' + err.message, 'err'); }
         }
 
         function libEpisodeText() {
@@ -2610,7 +2774,7 @@ HTML_TEMPLATE = """
         }
 
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') { closeLibrary(); closeErase(); }
+            if (e.key === 'Escape') { closeLibrary(); closeErase(); closeSaga(); }
         });
         document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('libSearch').addEventListener('keypress', (e) => {

@@ -48,6 +48,7 @@ reconstruction complète après une migration/panne, voir [`INSTALL.md`](INSTALL
   - Numéro de saison/épisode
 - 👁️ **Aperçu en temps réel** : Vois le résultat immédiatement
 - 💾 **Sauvegarde JPEG** : Exporte tes posters personnalisés (1000×1500 px)
+- 📚 **Sagas** : cherche aussi les sagas TheMovieDB (« Harry Potter - Saga »…) ; leur affiche est envoyée directement dans la collection Emby correspondante (l'ancienne affiche est sauvegardée dans `_anciens-posters/_sagas`)
 - ⚙️ **Page Réglages** : adresse et clé d'Emby, clé TheMovieDB et dossiers se règlent depuis le navigateur (même page que dans MouFlopening et MouFlanimeXer)
 
 ## 📋 Prérequis

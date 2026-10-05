@@ -35,8 +35,8 @@ def configured():
     return bool(api_key())
 
 
-def _request(method, path, **kwargs):
-    headers = {"X-Emby-Token": api_key(), "Accept": "application/json"}
+def _request(method, path, extra_headers=None, **kwargs):
+    headers = {"X-Emby-Token": api_key(), "Accept": "application/json", **(extra_headers or {})}
     try:
         resp = requests.request(method, base_url() + path, headers=headers, timeout=TIMEOUT, **kwargs)
     except requests.exceptions.ConnectionError:
@@ -165,3 +165,42 @@ def refresh_for(media_type, tmdb_id, rel, titles, season_text=None, episode_text
         return {"ok": False, "message": str(e)}
     except Exception as e:  # filet de sécurité: ne jamais casser la copie du poster
         return {"ok": False, "message": f"Erreur Emby inattendue: {e}"}
+
+
+# ---------------------------------------------------------------------------
+# Sagas (collections Emby « BoxSet ») : leur affiche n'est pas dans un dossier de la médiathèque,
+# Emby la garde lui-même -> on la lit et on la remplace par l'API d'Emby.
+# ---------------------------------------------------------------------------
+
+def find_boxsets(tmdb_collection_id=None, terms=()):
+    """Collections Emby candidates : d'abord par identifiant TMDB de la saga, puis par nom. -> [{id, name, sure}]"""
+    out, seen = [], set()
+    if tmdb_collection_id:
+        for i in _items({"IncludeItemTypes": "BoxSet", "AnyProviderIdEquals": f"tmdb.{tmdb_collection_id}", "Limit": 20}):
+            if _tmdb_of(i) == str(tmdb_collection_id) and i["Id"] not in seen:
+                seen.add(i["Id"])
+                out.append({"id": i["Id"], "name": i.get("Name", "?"), "sure": True})
+    for term in terms:
+        if not term:
+            continue
+        for i in _items({"IncludeItemTypes": "BoxSet", "SearchTerm": term, "Limit": 20}):
+            if i["Id"] not in seen:
+                seen.add(i["Id"])
+                out.append({"id": i["Id"], "name": i.get("Name", "?"), "sure": False})
+    return out
+
+
+def get_primary_image(item_id):
+    """Affiche actuelle d'un élément Emby (octets JPEG/PNG) ou None s'il n'en a pas."""
+    try:
+        r = _request("GET", f"/Items/{item_id}/Images/Primary", params={"quality": 95})
+    except EmbyError:
+        return None
+    return r.content or None
+
+
+def set_primary_image(item_id, image_bytes, mime="image/jpeg"):
+    """Remplace l'affiche d'un élément Emby (l'API attend l'image encodée en base64)."""
+    import base64
+    _request("POST", f"/Items/{item_id}/Images/Primary", extra_headers={"Content-Type": mime},
+             data=base64.b64encode(image_bytes))
