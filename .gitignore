@@ -50,3 +50,6 @@ batch.log
 
 # Configuration locale et clés: JAMAIS sur GitHub
 .env
+
+# Polices sous licence (Arial...) : à déposer dans data/fonts/, jamais sur GitHub
+fonts/arial*.ttf
