@@ -113,6 +113,7 @@ LOGIN_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>Connexion · MouFloster</title>
+<link rel="icon" type="image/svg+xml" href="/icons/moufloster.svg"><link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png"><link rel="apple-touch-icon" href="/icons/apple-touch-icon.png"><link rel="manifest" href="/icons/manifest.webmanifest"><meta name="theme-color" content="#121315">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -233,9 +234,22 @@ def init_app(app, version=""):
     def is_logged_in():
         return bool(configured() and session.get("u") == _user() and hmac.compare_digest(session.get("f", ""), _fingerprint()))
 
+    @app.route("/icons/<path:name>")
+    def app_icons(name):
+        from flask import send_from_directory
+        resp = send_from_directory(BASE_DIR / "icons", name, max_age=86400)
+        if name.endswith(".webmanifest"):
+            resp.mimetype = "application/manifest+json"
+        return resp
+
+    @app.route("/favicon.ico")
+    def app_favicon():
+        from flask import send_from_directory
+        return send_from_directory(BASE_DIR / "icons", "favicon-32.png", max_age=86400)
+
     @app.before_request
     def require_login():
-        if request.path in ("/login", "/healthz"):
+        if request.path in ("/login", "/healthz", "/favicon.ico") or request.path.startswith("/icons/"):
             return None
         if is_logged_in():
             return None
