@@ -1483,8 +1483,8 @@ HTML_TEMPLATE = """
         .header h1 { font-weight: 600; }
         .header p { color: var(--muted); opacity: 1; }
         .version { background: var(--field); color: var(--muted); font-weight: 500; }
-        .logout-form { position: absolute; top: 10px; left: 15px; }
-        .log-open { position: absolute; top: 10px; left: 135px; }
+        .header-tools { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; margin: -14px 0 14px; }
+        .header-tools .version, .header-tools .logout-form, .header-tools .log-open { position: static; margin: 0; }
         #logText { width: 100%; height: 50vh; min-height: 220px; background: #0b0b0b; color: #cfe9cd; border: 1px solid var(--line); border-radius: 4px; padding: 10px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.4; resize: vertical; white-space: pre; overflow: auto; }
         .logout-btn { background: transparent !important; color: var(--muted); border: 1px solid var(--line); padding: 4px 12px; font-size: 0.75em; font-weight: 500; border-radius: 20px; width: auto; }
         .logout-btn:hover { color: var(--text); border-color: var(--muted); box-shadow: none; transform: none; }
@@ -1546,9 +1546,11 @@ HTML_TEMPLATE = """
 <body>
     <div class="container">
         <div class="header">
-            <div class="version">{{ version }}</div>
-            <button type="button" class="logout-btn log-open" id="logOpen">🩺 Journal</button>
-            <form method="post" action="/logout" class="logout-form"><button type="submit" class="logout-btn">Se déconnecter</button></form>
+            <div class="header-tools">
+                <form method="post" action="/logout" class="logout-form"><button type="submit" class="logout-btn">Se déconnecter</button></form>
+                <button type="button" class="logout-btn log-open" id="logOpen">🩺 Journal</button>
+                <div class="version">{{ version }}</div>
+            </div>
             <h1>🎬 Personnaliseur de Posters</h1>
             <p>Créez vos posters personnalisés avec TheMovieDB</p>
         </div>
