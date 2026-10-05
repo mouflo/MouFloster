@@ -1,4 +1,4 @@
-# 🎬 Moufloster - Générateur de Posters TheMovieDB
+# 🎬 MouFloster - Générateur de posters TheMovieDB
 
 Interface web manuelle pour télécharger et personnaliser des posters de films/séries depuis TheMovieDB, avec support des calques personnalisés (cadre blanc, dégradé noir, textes).
 
@@ -29,6 +29,10 @@ reconstruction complète après une migration/panne, voir [`INSTALL.md`](INSTALL
 
 ![L'envoi vers la médiathèque : ancien et nouveau poster côte à côte](docs/screenshots/mediatheque.png)
 
+**La page ⚙️ Réglages : adresse et clé d'Emby, clé TheMovieDB, dossiers**
+
+![La page Réglages : adresse et clé d'Emby, clé TheMovieDB, dossiers](docs/screenshots/reglages.png)
+
 **Sur téléphone**
 
 ![Sur téléphone](docs/screenshots/mobile.png)
@@ -44,6 +48,7 @@ reconstruction complète après une migration/panne, voir [`INSTALL.md`](INSTALL
   - Numéro de saison/épisode
 - 👁️ **Aperçu en temps réel** : Vois le résultat immédiatement
 - 💾 **Sauvegarde JPEG** : Exporte tes posters personnalisés (1000×1500 px)
+- ⚙️ **Page Réglages** : adresse et clé d'Emby, clé TheMovieDB et dossiers se règlent depuis le navigateur (même page que dans MouFlopening et MouFlanimeXer)
 
 ## 📋 Prérequis
 
@@ -65,6 +70,7 @@ pip install -r requirements.txt
 ```
 
 ### 3. Configure ta clé TheMovieDB
+Le plus simple : ouvre l'appli puis **⚙️ Réglages** et colle ta clé (elle reste sur le serveur, jamais sur GitHub). En ligne de commande :
 ```bash
 export TMDB_API_KEY="ta-clé-api-ici"
 export OUTPUT_DIR="/chemin/vers/sortie"
@@ -85,7 +91,7 @@ Ouvre http://localhost:5000 🎉
 2. **Sélection** → Clique sur un résultat, puis choisis un poster
 3. **Perso** → Active les calques et configure le texte via les checkboxes
 4. **Aperçu** → Vois le résultat en temps réel
-5. **Save** → Clique "Sauvegarder"
+5. **Sauvegarde** → Clique « Sauvegarder »
 
 ## 📐 Spécifications
 
@@ -101,11 +107,11 @@ Ouvre http://localhost:5000 🎉
 
 ## 🔧 Configuration avancée
 
-Modifie les constantes dans `app.py` :
-```python
-TMDB_API_KEY = "ta-clé"
-OUTPUT_BASE = "/dossier/sortie"
-MEDIATHEQUE_DIR = "/chemin/mediatheque"  # Pour intégration future
+Les dossiers et les clés se règlent dans **⚙️ Réglages**. Ils sont enregistrés dans `data/secrets.env` (jamais sur GitHub). Équivalent en ligne de commande :
+```bash
+bash set-secret.sh TMDB_API_KEY "ta-clé"
+bash set-secret.sh OUTPUT_DIR "/dossier/sortie"
+bash set-secret.sh MEDIATHEQUE_DIR "/chemin/mediatheque"
 ```
 
 ## 📂 Structure
@@ -115,7 +121,7 @@ moufloster/
 ├── app.py              # Application Flask principale
 ├── requirements.txt    # Dépendances Python
 ├── README.md          # Ce fichier
-└── .gitignore         # Git ignore rules
+└── .gitignore         # Fichiers ignorés par Git
 ```
 
 ## 🐛 Dépannage
@@ -130,7 +136,7 @@ app.run(port=8000)  # Autre port
 - Vérifie ta clé TMDB
 - Essaye avec un titre populaire ("Dune", "Breaking Bad")
 
-**Module not found ?**
+**Module introuvable ?**
 ```bash
 pip install --upgrade flask pillow requests
 ```
@@ -138,10 +144,10 @@ pip install --upgrade flask pillow requests
 ## 🗺️ Feuille de route
 
 - [ ] Auto-classification dans Emby/Jellyfin
-- [ ] Batch processing (plusieurs posters)
+- [ ] Traitement par lots (plusieurs posters)
 - [ ] Polices personnalisées
 - [ ] Historique des posters générés
-- [ ] Presets/templates
+- [ ] Préréglages / modèles
 
 ## 📝 Licence
 
@@ -150,8 +156,8 @@ Les polices Arial ne sont **pas** fournies (licence Monotype/Microsoft) : voir �
 
 ---
 
-**Besoin d'aide ?** Ouvre une issue ou demande à Claude ! 🤖
+**Besoin d'aide ?** Ouvre une « issue » sur GitHub ou demande à Claude ! 🤖
 
 ---
 
-*Similar to MouFlanimeXer but focused on poster generation with manual controls.*
+*Dans la même famille que MouFlanimeXer et MouFlopening, centré sur la création de posters avec réglages manuels.*
