@@ -5,6 +5,34 @@ Interface web manuelle pour télécharger et personnaliser des posters de films/
 Pour l'installation sur le serveur, le déploiement automatique et la
 reconstruction complète après une migration/panne, voir [`INSTALL.md`](INSTALL.md).
 
+## 📸 Aperçu
+
+*Captures avec des données de démonstration.*
+
+**La recherche d'un film ou d'une série**
+
+![La recherche d'un film ou d'une série](docs/screenshots/recherche.png)
+
+**Le choix de l'affiche, avec le filtre de langue**
+
+![Le choix de l'affiche, avec le filtre de langue](docs/screenshots/posters.png)
+
+**Cadre blanc, dégradé noir, textes et aperçu final**
+
+![Cadre blanc, dégradé noir, textes et aperçu final](docs/screenshots/apercu.png)
+
+**La fenêtre « Journal » pour comprendre une panne**
+
+![La fenêtre « Journal » pour comprendre une panne](docs/screenshots/journal.png)
+
+**L'envoi vers la médiathèque : ancien et nouveau poster côte à côte**
+
+![L'envoi vers la médiathèque : ancien et nouveau poster côte à côte](docs/screenshots/mediatheque.png)
+
+**Sur téléphone**
+
+![Sur téléphone](docs/screenshots/mobile.png)
+
 ## ✨ Fonctionnalités
 
 - 🔍 **Recherche TheMovieDB** : Cherche films/séries, affiche les résultats
