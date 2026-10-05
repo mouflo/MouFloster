@@ -117,7 +117,8 @@ pip install --upgrade flask pillow requests
 
 ## 📝 Licence
 
-Libre d'utilisation. Images de TheMovieDB (usage non-commercial).
+Code sous licence MIT (voir `LICENSE`) : réutilisable librement. Images de TheMovieDB (usage non-commercial).
+Les polices Arial ne sont **pas** fournies (licence Monotype/Microsoft) : voir « Polices » dans `INSTALL.md`.
 
 ---
 

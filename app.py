@@ -285,6 +285,7 @@ def _load_source_image(poster_url: str, tmdb_size: str):
 # ============================================================================
 
 FONT_CANDIDATES = [
+    str(Path(__file__).parent / "data" / "fonts" / "arialbd.ttf"),  # police à toi : à déposer dans data/fonts/ (voir INSTALL.md)
     str(Path(__file__).parent / "fonts" / "arialbd.ttf"),  # Arial Bold (fournie)
     str(Path(__file__).parent / "fonts" / "LiberationSans-Bold.ttf"),  # repli, métriques identiques à Arial
     "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",

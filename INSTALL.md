@@ -120,6 +120,15 @@ Puis : `systemctl daemon-reload && systemctl restart moufloster`
 
 Modifie `app.py` (`app.run(..., port=8080)`), puis redémarre le service.
 
+## 🔤 Polices
+
+Les titres des posters sont écrits en **Arial Gras**, qui n'est pas fournie avec ce dépôt (sa licence interdit de la redistribuer). Deux possibilités :
+
+1. **Tu as Arial** (Windows, Mac, ou ta propre copie) : dépose `arialbd.ttf` dans le dossier `data/fonts/` de l'application (`/opt/moufloster/data/fonts/`). Ce dossier est local et n'est jamais envoyé sur GitHub ni écrasé par les mises à jour.
+2. **Sinon** : rien à faire, l'application utilise **Liberation Sans Bold** (fournie, licence libre, mêmes dimensions qu'Arial), puis DejaVu en dernier recours.
+
+Pour une autre police, remplace `arialbd.ttf` par un fichier du même nom.
+
 ## 🐛 Dépannage
 
 **L'app ne démarre pas ?**

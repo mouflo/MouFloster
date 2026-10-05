@@ -124,3 +124,8 @@ fi
 
 maybe_install_lama
 log "=== Fin du déploiement Moufloster ==="
+
+# Polices (étape 1/2 de leur retrait du dépôt) : on garde une copie dans data/fonts/ (dossier local, jamais sur GitHub).
+# Récupérée depuis le commit précédent, donc elle survit au « reset --hard » même quand le dépôt ne les contient plus.
+mkdir -p "$REPO_DIR/data"
+git -C "$REPO_DIR" archive "$OLD_COMMIT" fonts 2>/dev/null | tar -x --skip-old-files -C "$REPO_DIR/data" 2>/dev/null || true
