@@ -115,6 +115,9 @@ diag.init_app(
     emby_ok_fn=emby.configured,
 )
 
+import emby_settings
+emby_settings.init_app(app, BASE_DIR, emby.base_url)
+
 # ============================================================================
 # TMDB Functions
 # ============================================================================
@@ -2661,6 +2664,46 @@ HTML_TEMPLATE = """
             if (e.key === 'Enter') search();
         });
     </script>
+<script>
+/* Réglage de la clé API Emby (enregistrée sur le serveur, jamais sur GitHub) */
+(function () {
+  var css = document.createElement('style');
+  css.textContent = '#embyKeyModal{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;padding:16px;z-index:60}#embyKeyModal.show{display:flex}#embyKeyModal .ek-box{background:var(--card,#1f1f1f);color:var(--text,#eee);border-radius:8px;width:100%;max-width:480px;padding:18px;box-sizing:border-box}#embyKeyModal h3{margin:0 0 6px}#embyKeyModal p{color:var(--muted,#999);font-size:.85rem;margin:0 0 12px}#embyKeyModal input{width:100%;box-sizing:border-box;padding:10px;border-radius:4px;border:1px solid var(--line,#444);background:var(--field,#2a2a2a);color:inherit;font-size:1rem}#embyKeyModal .ek-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}#embyKeyModal button{padding:9px 14px;border-radius:4px;border:1px solid var(--line,#444);background:var(--field,#2a2a2a);color:inherit;cursor:pointer;font-size:.9rem;width:auto}#embyKeyModal button.ek-main{background:var(--accent,#52b54b);border-color:transparent;color:#fff}#embyKeyModal .ek-msg{margin-top:10px;font-size:.9rem;min-height:1.2em}';
+  document.head.appendChild(css);
+  var m = document.createElement('div'); m.id = 'embyKeyModal';
+  m.innerHTML = '<div class="ek-box"><h3>🔑 Clé API Emby</h3><p id="ekState">…</p>' +
+    '<input id="ekInput" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Colle la nouvelle clé ici">' +
+    '<div class="ek-msg" id="ekMsg"></div><div class="ek-row"><button id="ekTest" type="button">Tester</button>' +
+    '<button id="ekSave" type="button" class="ek-main">Enregistrer</button><button id="ekClose" type="button">Fermer</button></div></div>';
+  document.body.appendChild(m);
+  var $ = function (id) { return document.getElementById(id); };
+  function msg(t, ok) { $('ekMsg').textContent = t || ''; $('ekMsg').style.color = ok ? '#7fd477' : '#ff9b94'; }
+  async function call(body) {
+    var r = await fetch('/api/settings/emby', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    if (r.status === 401) { location.href = '/login'; return {}; }
+    try { return await r.json(); } catch (e) { return {error: 'Erreur ' + r.status}; }
+  }
+  async function open() {
+    msg(''); $('ekInput').value = ''; m.classList.add('show');
+    try { var s = await (await fetch('/api/settings/emby')).json();
+      $('ekState').textContent = (s.configured ? 'Clé actuelle : ' + (s.hint || 'définie') : 'Aucune clé définie') + ' · Emby : ' + (s.host || '?');
+    } catch (e) { $('ekState').textContent = ''; }
+    $('ekInput').focus();
+  }
+  $('ekTest').onclick = async function () { msg('Test…', true); var r = await call({api_key: $('ekInput').value, test: true}); msg(r.message || r.error, r.ok); };
+  $('ekSave').onclick = async function () {
+    msg('Vérification…', true); var r = await call({api_key: $('ekInput').value});
+    msg(r.message || r.error, r.ok); if (r.ok) { $('ekInput').value = ''; setTimeout(function () { m.classList.remove('show'); }, 1800); }
+  };
+  $('ekClose').onclick = function () { m.classList.remove('show'); };
+  var anchor = $('logOpen');
+  if (anchor && anchor.parentNode) {
+    var b = document.createElement('button'); b.type = 'button'; b.id = 'embyKeyOpen';
+    b.className = anchor.className; b.textContent = '🔑 Clé Emby'; b.onclick = open;
+    anchor.parentNode.insertBefore(b, anchor);
+  }
+})();
+</script>
 </body>
 </html>
 """
