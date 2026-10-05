@@ -41,9 +41,15 @@ def redact(text: str) -> str:
     return text
 
 
+class _RedactFormatter(logging.Formatter):
+    """Masque les clés (api_key=…, jetons) dans TOUTES les lignes du journal, même dans un message d'erreur imprévu."""
+    def format(self, record):
+        return redact(super().format(record))
+
+
 def setup_logging():
     """Journal détaillé dans la console ET dans data/moufloster.log (tourne tout seul: 1 Mo x 3 fichiers)"""
-    fmt = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    fmt = _RedactFormatter("%(asctime)s - %(levelname)s - %(message)s")
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     for h in list(root.handlers):

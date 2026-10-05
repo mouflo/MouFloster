@@ -355,13 +355,19 @@ def apply_poster(source_file, rel, name, action, backup_root, sub="", episode=Fa
     if action == "both":
         stem = name[:-4]
         target = folder / f"{stem}-new.jpg"
-        if target.exists():
-            target = folder / f"{stem}-new-{stamp}.jpg"
+        n = 2
+        while target.exists():               # jamais d'écrasement, même deux envois dans la même seconde
+            target = folder / f"{stem}-new-{stamp}{'' if n == 2 else f'-{n}'}.jpg"
+            n += 1
     elif action == "replace":
         if target.exists():
             backup_dir = Path(backup_root) / shown
             backup_dir.mkdir(parents=True, exist_ok=True)
             backup_path = backup_dir / f"{name[:-4]}.{stamp}.jpg"
+            n = 2
+            while backup_path.exists():      # deux remplacements dans la même seconde : la 1re sauvegarde (l'original) est gardée
+                backup_path = backup_dir / f"{name[:-4]}.{stamp}-{n}.jpg"
+                n += 1
             shutil.copy2(target, backup_path)  # si ça échoue, on s'arrête avant de remplacer
             if not backup_path.is_file() or backup_path.stat().st_size != target.stat().st_size:
                 raise ValueError("La sauvegarde de l'ancien poster a échoué, rien n'a été remplacé")

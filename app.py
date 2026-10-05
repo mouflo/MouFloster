@@ -15,6 +15,7 @@ import json
 from datetime import datetime
 import base64
 import uuid
+import threading
 import time
 import numpy as np
 import logging
@@ -189,12 +190,14 @@ def search_tmdb(query: str):
 
         return {"results": results}
     except Exception as e:
-        logger.error(f"Erreur TMDB search: {e}")
-        return {"error": f"❌ Erreur de connexion à TMDB: {str(e)}"}
+        logger.error(f"Erreur TMDB search: {diag.redact(str(e))}")
+        return {"error": "❌ Erreur de connexion à TMDB (détails : bouton Journal)"}
 
 
 def get_posters_for_item(tmdb_id: str, media_type: str):
     """Récupère TOUS les posters (toutes langues) d'un film/série, avec leur langue"""
+    if media_type not in ("movie", "tv") or not str(tmdb_id).isdigit():
+        return {"error": "Titre invalide"}
     url = f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}/images"
     try:
         response = tmdb_get(url)  # sans filtre de langue: TMDB renvoie toutes les langues
@@ -234,8 +237,8 @@ def get_posters_for_item(tmdb_id: str, media_type: str):
                 default = languages[0]["code"]
         return {"posters": posters, "languages": languages, "default": default}
     except Exception as e:
-        logger.error(f"Erreur TMDB posters: {e}")
-        return {"error": str(e)}
+        logger.error(f"Erreur TMDB posters: {diag.redact(str(e))}")
+        return {"error": "❌ Affiches indisponibles sur TMDB (détails : bouton Journal)"}
 
 
 def download_image(url: str):
@@ -253,6 +256,27 @@ def download_image(url: str):
 UPLOAD_DIR = os.path.join(OUTPUT_BASE, "_uploads")
 _UPLOAD_RE = re.compile(r"^[0-9a-f]{32}\.jpg$")
 UPLOAD_URL_PREFIX = "/api/upload/"
+UPLOAD_KEEP_DAYS = 7
+UPLOAD_MAX_SIDE = 4000                    # une image envoyée plus grande est réduite (assez pour un poster 1000x1500 zoomé)
+Image.MAX_IMAGE_PIXELS = 60_000_000       # refuse les images géantes (mémoire du conteneur)
+
+
+def _clean_uploads():
+    """Les images envoyées et les étapes de « Effacer un élément » ne servent que le temps de la retouche : nettoyées après 7 jours."""
+    import time as _t
+    n = 0
+    try:
+        for f in os.scandir(UPLOAD_DIR):
+            if f.is_file() and _UPLOAD_RE.match(f.name) and _t.time() - f.stat().st_mtime > UPLOAD_KEEP_DAYS * 86400:
+                os.unlink(f.path)
+                n += 1
+    except OSError:
+        pass
+    if n:
+        logger.info(f"🧹 {n} image(s) temporaire(s) de plus de {UPLOAD_KEEP_DAYS} jours supprimée(s) dans _uploads")
+
+
+threading.Thread(target=_clean_uploads, daemon=True).start()
 
 
 _source_cache = {}  # (url, taille) -> image: évite de retélécharger à chaque déplacement du poster
@@ -468,7 +492,7 @@ def index():
 @app.route("/api/search", methods=["POST"])
 def api_search():
     """Recherche sur TMDB"""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     query = data.get("query", "").strip()
 
     if not query:
@@ -481,7 +505,7 @@ def api_search():
 @app.route("/api/posters", methods=["POST"])
 def api_posters():
     """Récupère les posters pour un film/série"""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     tmdb_id = data.get("id")
     media_type = data.get("media_type", "movie")
 
@@ -513,6 +537,8 @@ def api_upload():
         return jsonify({"error": "Ce fichier n'est pas une image lisible (JPG, PNG, WebP...)"}), 400
     if img.width < 100 or img.height < 100:
         return jsonify({"error": "Image trop petite"}), 400
+    if max(img.size) > UPLOAD_MAX_SIDE:
+        img.thumbnail((UPLOAD_MAX_SIDE, UPLOAD_MAX_SIDE), Image.LANCZOS)
 
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     name = uuid.uuid4().hex + ".jpg"
@@ -587,7 +613,7 @@ def inpaint_region(img: Image.Image, mask_img: Image.Image):
 @app.route("/api/erase", methods=["POST"])
 def api_erase():
     """Efface un élément (logo, texte...) peint par l'utilisateur sur le poster"""
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     poster_url = data.get("poster_url") or ""
     mask_data = data.get("mask") or ""
     try:
@@ -619,7 +645,7 @@ def api_erase():
 @app.route("/api/preview", methods=["POST"])
 def api_preview():
     """Génère un aperçu du poster composé"""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     poster_url = data.get("poster_url")
 
     border_style = data.get("border_style", "standard")
@@ -676,7 +702,7 @@ def api_preview():
 @app.route("/api/save", methods=["POST"])
 def api_save():
     """Sauvegarde le poster composé"""
-    data = request.json
+    data = request.get_json(silent=True) or {}
     poster_url = data.get("poster_url")
     title = data.get("title", "poster")
 
@@ -716,9 +742,13 @@ def api_save():
         )
 
         # Sauvegarder
-        safe_title = "".join(c for c in title if c.isalnum() or c in " -_").strip()
+        safe_title = "".join(c for c in title if c.isalnum() or c in " -_").strip() or "poster"
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{safe_title}_{timestamp}.jpg"
+        n = 2
+        while os.path.exists(os.path.join(OUTPUT_BASE, filename)):      # jamais d'écrasement (deux enregistrements dans la même seconde)
+            filename = f"{safe_title}_{timestamp}_{n}.jpg"
+            n += 1
         filepath = os.path.join(OUTPUT_BASE, filename)
 
         composed.save(filepath, quality=95)
@@ -765,7 +795,7 @@ def _to_int(value):
 @app.route("/api/library/match", methods=["POST"])
 def api_library_match():
     """Trouve le dossier de la médiathèque correspondant au titre choisi"""
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     media_type = "tv" if data.get("media_type") == "tv" else "movie"
     if not library.LIBRARY_ROOT.is_dir():
         return jsonify({"error": f"Médiathèque introuvable: {library.LIBRARY_ROOT}"}), 500
@@ -783,14 +813,21 @@ def api_library_match():
         confidence, selected = "memorise", memo
         if not any(c["rel"] == memo for c in candidates):
             family, _, name = memo.partition("/")
-            candidates.insert(0, {"rel": memo, "family": family, "name": name, "score": 3.0})
+            candidates.insert(0, {"rel": memo, "family": family, "name": name, "score": 3.0,
+                                  "media_type": "tv" if family in library.FAMILIES["tv"] else "movie"})
     elif candidates:
         best = candidates[0]
         gap = best["score"] - (candidates[1]["score"] if len(candidates) > 1 else 0)
         selected = best["rel"]
         confidence = "sur" if best["score"] >= 0.9 and (gap >= 0.05 or best["score"] >= 2) else "incertain"
 
-    name = library.target_name(media_type, data.get("season_text"))
+    folder_type = media_type
+    if selected:                                    # un film rangé dans une série (spéciaux) : on raisonne avec le type du DOSSIER
+        folder_type = "tv" if selected.partition("/")[0] in library.FAMILIES["tv"] else "movie"
+    season_text = data.get("season_text")
+    if folder_type == "tv" and media_type == "movie" and not str(season_text or "").strip():
+        season_text = "0"
+    name = library.target_name(folder_type, season_text)
     return jsonify({
         "candidates": candidates,
         "selected": selected,
@@ -803,7 +840,7 @@ def api_library_match():
 
 @app.route("/api/library/search", methods=["POST"])
 def api_library_search():
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     text = (data.get("q") or "").strip()
     if len(text) < 2:
         return jsonify({"candidates": []})
@@ -813,7 +850,7 @@ def api_library_search():
 
 @app.route("/api/library/inspect", methods=["POST"])
 def api_library_inspect():
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     media_type = "tv" if data.get("media_type") == "tv" else "movie"
     try:
         tgt = library.resolve_target(data.get("rel"), media_type, data.get("season_text"), data.get("episode_text"))
@@ -842,7 +879,7 @@ def api_library_file():
 @app.route("/api/library/apply", methods=["POST"])
 def api_library_apply():
     """Copie le poster sauvegardé dans le dossier de la médiathèque"""
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     media_type = "tv" if data.get("media_type") == "tv" else "movie"
     # type du DOSSIER choisi (ex: un film TMDB rangé dans les spéciaux d'une série)
     target_type = "tv" if data.get("target_type") == "tv" else ("movie" if data.get("target_type") == "movie" else media_type)
@@ -1965,6 +2002,8 @@ HTML_TEMPLATE = """
         }
 
         async function loadPosters(item) {
+            selectedPoster = null;              // nouveau titre : l'affiche de l'ancien titre n'est plus choisie
+            document.getElementById('previewImage').innerHTML = '<div class="preview-placeholder">Aperçu</div>';
             document.getElementById('postersLoading').classList.add('show');
             document.getElementById('posters').innerHTML = '';
             const sel = document.getElementById('langSelect');
@@ -2420,13 +2459,20 @@ HTML_TEMPLATE = """
             const q = document.getElementById('libSearch').value.trim();
             if (q.length < 2) return;
             libSetStatus('Recherche...');
-            const res = await fetch('/api/library/search', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({q, media_type: selectedItem.media_type})
-            });
-            const data = await res.json();
-            if (libFill(data.candidates, data.candidates[0] && data.candidates[0].rel)) {
+            let data = {};
+            try {
+                const res = await fetch('/api/library/search', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({q, media_type: selectedItem.media_type})
+                });
+                data = await res.json();
+            } catch (e) {
+                return libSetStatus('Recherche impossible (serveur injoignable ?)', 'err');
+            }
+            const cands = data.candidates || [];
+            if (data.error) return libSetStatus(data.error, 'err');
+            if (libFill(cands, cands[0] && cands[0].rel)) {
                 libSetStatus('Choisis le bon dossier dans la liste.', 'warn');
                 libInspect();
             } else {

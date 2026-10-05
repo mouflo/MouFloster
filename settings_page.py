@@ -17,6 +17,7 @@ from emby_settings import _write_secret
 
 logger = logging.getLogger(__name__)
 _URL_RE = re.compile(r"^https?://[^\s/]+(:\d{1,5})?(/\S*)?$")
+_BAD_CHARS = set('"$`\\\n\r')     # interdits : ils casseraient le fichier data/secrets.env
 
 
 def init_app(app, base_dir, version_fn, get_dirs):
@@ -40,7 +41,7 @@ def init_app(app, base_dir, version_fn, get_dirs):
     @app.route("/api/settings/emby-host", methods=["POST"])
     def emby_host_save():
         host = str((request.get_json(silent=True) or {}).get("host", "")).strip().rstrip("/")
-        if not _URL_RE.match(host):
+        if not _URL_RE.match(host) or _BAD_CHARS & set(host):
             return jsonify({"ok": False, "error": "Adresse invalide : elle doit ressembler à http://192.168.1.134:8096"}), 400
         _write_secret(secrets, "EMBY_URL", host)
         os.environ["EMBY_URL"] = host
@@ -50,11 +51,17 @@ def init_app(app, base_dir, version_fn, get_dirs):
     @app.route("/api/settings/paths", methods=["POST"])
     def paths_save():
         body = request.get_json(silent=True) or {}
-        library, output = str(body.get("library", "")).strip(), str(body.get("output", "")).strip()
+        library, output = str(body.get("library", "")).strip().rstrip("/"), str(body.get("output", "")).strip().rstrip("/")
+        for value in (library, output):
+            if not value.startswith("/") or _BAD_CHARS & set(value):
+                return jsonify({"ok": False, "error": f"Chemin invalide : « {value} » (chemin complet commençant par /, sans guillemets ni $)."}), 400
         if not library or not Path(library).is_dir():
             return jsonify({"ok": False, "error": f"Dossier de la médiathèque introuvable sur le serveur : « {library} ». Rien n'a été enregistré."}), 400
         if not output or not (Path(output).is_dir() or Path(output).parent.is_dir()):
             return jsonify({"ok": False, "error": f"Dossier des posters inaccessible : « {output} » (le partage est-il monté ?). Rien n'a été enregistré."}), 400
+        probe = Path(output) if Path(output).is_dir() else Path(output).parent
+        if not os.access(probe, os.W_OK):
+            return jsonify({"ok": False, "error": f"Impossible d'écrire dans « {probe} » (droits ? partage en lecture seule ?). Rien n'a été enregistré."}), 400
         _write_secret(secrets, "MEDIATHEQUE_DIR", library)
         _write_secret(secrets, "OUTPUT_DIR", output)
         logger.info("Dossiers mis à jour depuis la page web : médiathèque %s · posters %s", library, output)
