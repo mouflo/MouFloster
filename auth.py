@@ -114,47 +114,11 @@ LOGIN_HTML = """<!DOCTYPE html>
 <meta name="robots" content="noindex">
 <title>Connexion · MouFloster</title>
 <link rel="icon" type="image/svg+xml" href="/icons/moufloster.svg"><link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png"><link rel="apple-touch-icon" href="/icons/apple-touch-icon.png"><link rel="manifest" href="/icons/manifest.webmanifest"><meta name="theme-color" content="#121315">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-<style>
-    :root {
-        --bg: #101010; --card: #1c1c1c; --field: #2a2a2a; --line: #3a3a3a;
-        --text: #ffffff; --muted: #a0a0a0; --accent: #52b54b; --accent-hover: #63c75c; --err: #e5534b;
-    }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; min-height: 100%; }
-    body {
-        background: var(--bg); color: var(--text);
-        font-family: "Noto Sans", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif;
-        display: flex; align-items: center; justify-content: center; padding: 16px; min-height: 100vh;
-    }
-    .box { width: 100%; max-width: 380px; background: var(--card); border-radius: 8px; padding: 32px 28px; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
-    h1 { margin: 0 0 4px; font-size: 1.6rem; font-weight: 600; text-align: center; }
-    h1 span { color: var(--accent); }
-    .sub { text-align: center; color: var(--muted); font-size: .9rem; margin-bottom: 24px; }
-    label { display: block; font-size: .85rem; color: var(--muted); margin: 14px 0 6px; }
-    input[type=text], input[type=password] {
-        width: 100%; padding: 12px; font: inherit; color: var(--text); background: var(--field);
-        border: 1px solid var(--line); border-radius: 4px; outline: none;
-    }
-    input[type=text]:focus, input[type=password]:focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-    .remember { display: flex; align-items: center; gap: 8px; margin: 16px 0 4px; font-size: .9rem; color: var(--muted); }
-    .remember input { width: 18px; height: 18px; accent-color: var(--accent); }
-    button {
-        width: 100%; margin-top: 20px; padding: 12px; font: inherit; font-weight: 600; color: #fff;
-        background: var(--accent); border: 0; border-radius: 4px; cursor: pointer;
-    }
-    button:hover { background: var(--accent-hover); }
-    .error { background: rgba(229,83,75,.15); border: 1px solid var(--err); color: #ffb4ae; padding: 10px 12px; border-radius: 4px; font-size: .9rem; margin-bottom: 8px; }
-    .setup { font-size: .9rem; line-height: 1.5; }
-    .setup code { display: block; background: var(--field); padding: 10px; border-radius: 4px; margin: 10px 0; user-select: all; word-break: break-all; color: #cfe9cd; }
-    .ver { text-align: center; color: #666; font-size: .75rem; margin-top: 22px; }
-</style>
+<link rel="stylesheet" href="/ui/mou-ui.css">
 </head>
-<body>
+<body class="mou-login">
 <main class="box">
-    <h1>Mou<span>Floster</span></h1>
+    <h1 class="mou-title big"><img src="/icons/moufloster.svg" alt=""><span><span class="w">MouFl</span><span class="g">oster</span></span></h1>
     <div class="sub">Générateur de posters</div>
     {% if not configured %}
         <div class="error">Aucun identifiant n'est encore défini sur ce serveur.</div>
@@ -178,7 +142,7 @@ LOGIN_HTML = """<!DOCTYPE html>
             <button type="submit">Se connecter</button>
         </form>
     {% endif %}
-    <div class="ver">{{ version }}</div>
+    {% if version %}<div class="ver">{{ version }}</div>{% endif %}
 </main>
 </body>
 </html>
@@ -242,6 +206,11 @@ def init_app(app, version=""):
             resp.mimetype = "application/manifest+json"
         return resp
 
+    @app.route("/ui/<path:name>")
+    def app_ui(name):
+        from flask import send_from_directory
+        return send_from_directory(BASE_DIR / "ui", name, max_age=300)
+
     @app.route("/favicon.ico")
     def app_favicon():
         from flask import send_from_directory
@@ -249,7 +218,7 @@ def init_app(app, version=""):
 
     @app.before_request
     def require_login():
-        if request.path in ("/login", "/healthz", "/favicon.ico") or request.path.startswith("/icons/"):
+        if request.path in ("/login", "/healthz", "/favicon.ico") or request.path.startswith(("/icons/", "/ui/")):
             return None
         if is_logged_in():
             return None

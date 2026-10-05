@@ -1,0 +1,104 @@
+/* ===========================================================================
+   MouFlux · style commun des applis (MouFlanimeXer, MouFloster, MouFlopening)
+   Même fichier dans les trois dépôts : on le modifie à un seul endroit puis on le recopie.
+   =========================================================================== */
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap');
+
+:root, :root[data-theme] {
+    color-scheme: dark;
+    --bg:#101010; --card:#1c1c1c; --surface:#1c1c1c; --surface2:#242424; --field:#2a2a2a; --line:#3a3a3a;
+    --text:#fff; --text2:#d0d0d0; --muted:#a0a0a0;
+    --accent:#52b54b; --accent-hover:#63c75c; --err:#e5534b; --warn:#e5a84b;
+    /* noms utilisés par MouFlanimeXer */
+    --fg:#fff; --box-bg:#1c1c1c; --box-border:#3a3a3a; --input-bg:#2a2a2a; --input-fg:#fff; --input-border:#3a3a3a;
+    --log-bg:#0b0b0b; --log-fg:#cfe9cd; --alert-bg:rgba(229,83,75,.15); --alert-border:#e5534b; --alert-fg:#ffb4ae; --thumb-border:#3a3a3a;
+}
+* { box-sizing:border-box; }
+html, body { margin:0; min-height:100%; }
+body { background:var(--bg); color:var(--text); font-family:"Noto Sans","Segoe UI",system-ui,-apple-system,Roboto,Arial,sans-serif; }
+::-webkit-scrollbar { width:10px; height:10px; } ::-webkit-scrollbar-thumb { background:#3a3a3a; border-radius:5px; } ::-webkit-scrollbar-track { background:transparent; }
+
+/* ---- Titre : icône + « MouFl » en blanc + suite du nom en vert ---- */
+.mou-title { display:flex; align-items:center; gap:12px; margin:0; font-size:1.5rem; font-weight:600; line-height:1.2; }
+.mou-title img { width:40px; height:40px; border-radius:10px; flex:none; display:block; }
+.mou-title .w { color:#fff; }
+.mou-title .g { color:var(--accent); }
+.mou-title.big { flex-direction:column; text-align:center; font-size:1.7rem; gap:10px; }
+.mou-title.big img { width:64px; height:64px; border-radius:16px; }
+
+/* ---- En-tête commun ---- */
+.mou-header { background:var(--card); border-radius:8px; padding:20px 24px; margin:0 0 16px; position:relative; }
+.mou-header .mou-sub { margin:6px 0 0 52px; color:var(--muted); font-size:.9rem; }
+.mou-actions { position:absolute; top:14px; right:16px; display:flex; gap:8px; align-items:center; }
+.mou-actions form { margin:0; }
+body.mou-skin .mou-actions button, .mou-actions .mou-btn { width:auto; margin:0; }
+.mou-ver { color:#666; font-size:.75rem; margin-right:6px; }
+
+/* ---- Boutons, champs, cases : même aspect partout ---- */
+.mou-btn, body.mou-skin button {
+    font:inherit; padding:9px 16px; border:0; border-radius:4px; background:var(--accent); color:#fff;
+    font-weight:600; cursor:pointer; margin:0;
+}
+.mou-btn:hover, body.mou-skin button:hover { background:var(--accent-hover); }
+.mou-btn:disabled, body.mou-skin button:disabled { opacity:.5; cursor:not-allowed; }
+.mou-btn.ghost, body.mou-skin button.ghost, body.mou-skin button.secondary { background:var(--field); color:var(--text); font-weight:500; }
+.mou-btn.ghost:hover, body.mou-skin button.ghost:hover, body.mou-skin button.secondary:hover { background:#383838; }
+.mou-btn.small { padding:6px 12px; font-size:.85rem; }
+.mou-btn.danger, body.mou-skin button.danger { background:var(--err); }
+.mou-btn.warn, body.mou-skin button.warn { background:var(--warn); color:#1a1a1a; }
+body.mou-skin input[type=file] { color:var(--muted); max-width:100%; }
+body.mou-skin input[type=text], body.mou-skin input[type=number], body.mou-skin input[type=password], body.mou-skin select, body.mou-skin textarea.mou-field {
+    font:inherit; background:var(--field); color:var(--text); border:1px solid var(--line); border-radius:4px; padding:9px 10px; outline:none;
+}
+body.mou-skin input[type=text]:focus, body.mou-skin input[type=number]:focus, body.mou-skin select:focus { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+body.mou-skin input[type=checkbox], body.mou-skin input[type=radio], body.mou-skin input[type=range] { accent-color:var(--accent); }
+body.mou-skin input[type=checkbox], body.mou-skin input[type=radio] { width:17px; height:17px; }
+.mou-note { padding:10px 12px; border-radius:4px; font-size:.9rem; margin:10px 0; }
+.mou-note.ok { background:rgba(82,181,75,.15); border:1px solid var(--accent); color:#c9efc5; }
+.mou-note.err { background:rgba(229,83,75,.15); border:1px solid var(--err); color:#ffb4ae; }
+.mou-note.warn { background:rgba(229,168,75,.15); border:1px solid var(--warn); color:#f3d9a8; }
+.mou-panel { background:var(--card); border-radius:8px; padding:16px; }
+
+/* ---- Fenêtres (Journal, Clé Emby) ---- */
+.mou-modal { position:fixed; inset:0; background:rgba(0,0,0,.7); display:none; align-items:center; justify-content:center; padding:16px; z-index:1000; }
+.mou-modal.show { display:flex; }
+.mou-box { background:var(--card); color:var(--text); border-radius:8px; width:100%; max-width:900px; max-height:90vh; display:flex; flex-direction:column; padding:18px; font-family:inherit; }
+.mou-box.narrow { max-width:480px; }
+.mou-box h3 { margin:0 0 4px; }
+.mou-box .mou-msub { color:var(--muted); font-size:.85rem; margin:0 0 10px; }
+.mou-box textarea { flex:1; min-height:300px; background:#0c0c0c; color:#d6d6d6; border:1px solid var(--line); border-radius:4px; padding:10px; font:12px/1.4 ui-monospace,Menlo,Consolas,monospace; resize:none; white-space:pre; overflow:auto; width:100%; }
+.mou-box input[type=password], .mou-box input[type=text] { width:100%; font:inherit; font-size:1rem; background:var(--field); color:var(--text); border:1px solid var(--line); border-radius:4px; padding:10px; outline:none; }
+.mou-box input:focus { border-color:var(--accent); }
+.mou-actions-row { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+.mou-box .mou-status { margin-top:10px; font-size:.9rem; }
+
+/* ---- Page de connexion ---- */
+body.mou-login { display:flex; align-items:center; justify-content:center; padding:16px; min-height:100vh; }
+.mou-login .box { width:100%; max-width:380px; background:var(--card); border-radius:8px; padding:32px 28px; box-shadow:0 8px 30px rgba(0,0,0,.5); }
+.mou-login .sub { text-align:center; color:var(--muted); font-size:.9rem; margin:10px 0 24px; }
+.mou-login label { display:block; font-size:.85rem; color:var(--muted); margin:14px 0 6px; }
+.mou-login input[type=text], .mou-login input[type=password] { width:100%; padding:12px; font:inherit; color:var(--text); background:var(--field); border:1px solid var(--line); border-radius:4px; outline:none; }
+.mou-login input[type=text]:focus, .mou-login input[type=password]:focus { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+.mou-login .remember { display:flex; align-items:center; gap:8px; margin:16px 0 4px; font-size:.9rem; color:var(--muted); }
+.mou-login .remember input { width:18px; height:18px; accent-color:var(--accent); }
+.mou-login button { width:100%; margin-top:20px; padding:12px; font:inherit; font-weight:600; color:#fff; background:var(--accent); border:0; border-radius:4px; cursor:pointer; }
+.mou-login button:hover { background:var(--accent-hover); }
+.mou-login .error { background:rgba(229,83,75,.15); border:1px solid var(--err); color:#ffb4ae; padding:10px 12px; border-radius:4px; font-size:.9rem; margin-bottom:8px; }
+.mou-login .setup { font-size:.9rem; line-height:1.5; }
+.mou-login .setup code { display:block; background:var(--field); padding:10px; border-radius:4px; margin:10px 0; user-select:all; word-break:break-all; color:#cfe9cd; }
+.mou-login .ver { text-align:center; color:#666; font-size:.75rem; margin-top:22px; }
+
+@media (max-width:800px) {
+    .mou-header { padding:16px; }
+    .mou-title { font-size:1.3rem; }
+    .mou-header .mou-sub { margin-left:52px; }
+    .mou-header { display:flex; flex-direction:column; }
+    .mou-actions { position:static; order:3; margin-top:14px; flex-wrap:wrap; }
+    .mou-actions .mou-ver { order:9; margin:0 0 0 auto; align-self:center; }
+    .mou-modal { padding:0; align-items:stretch; }
+    .mou-box { max-width:none; max-height:none; height:100%; border-radius:0; }
+    .mou-box.narrow { height:auto; margin-top:auto; border-radius:12px 12px 0 0; }
+    .mou-box textarea { min-height:0; }
+    .mou-actions-row .mou-btn { flex:1; padding:12px; }
+    input[type=text], input[type=password], input[type=number], select { font-size:16px; }
+}

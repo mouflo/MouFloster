@@ -875,6 +875,8 @@ HTML_TEMPLATE = """
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🎬 Personnaliseur de Posters</title>
 <link rel="icon" type="image/svg+xml" href="/icons/moufloster.svg"><link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png"><link rel="apple-touch-icon" href="/icons/apple-touch-icon.png"><link rel="manifest" href="/icons/manifest.webmanifest"><meta name="theme-color" content="#121315">
+    <link rel="stylesheet" href="/ui/mou-ui.css">
+    <script src="/ui/mou-ui.js" defer></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1480,16 +1482,12 @@ HTML_TEMPLATE = """
             background: var(--bg);
             color: var(--text);
         }
-        .container { background: var(--surface); border-radius: 8px; box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6); }
+        body { padding: 16px; }
+        .container { max-width: 1200px; background: transparent; border-radius: 0; box-shadow: none; overflow: visible; }
         .header { background: #141414; color: var(--text); border-bottom: 1px solid var(--line); }
         .header h1 { font-weight: 600; }
         .header p { color: var(--muted); opacity: 1; }
         .version { background: var(--field); color: var(--muted); font-weight: 500; }
-        .header-tools { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; margin: -14px 0 14px; }
-        .header-tools .version, .header-tools .logout-form, .header-tools .log-open { position: static; margin: 0; }
-        #logText { width: 100%; height: 50vh; min-height: 220px; background: #0b0b0b; color: #cfe9cd; border: 1px solid var(--line); border-radius: 4px; padding: 10px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.4; resize: vertical; white-space: pre; overflow: auto; }
-        .logout-btn { background: transparent !important; color: var(--muted); border: 1px solid var(--line); padding: 4px 12px; font-size: 0.75em; font-weight: 500; border-radius: 20px; width: auto; }
-        .logout-btn:hover { color: var(--text); border-color: var(--muted); box-shadow: none; transform: none; }
         .section { background: var(--surface2); border-left: 3px solid var(--accent); }
         .section h3 { color: var(--text); font-weight: 600; }
         input[type="text"], input[type="number"], select {
@@ -1547,15 +1545,9 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <div class="header-tools">
-                <form method="post" action="/logout" class="logout-form"><button type="submit" class="logout-btn">Se déconnecter</button></form>
-                <button type="button" class="logout-btn log-open" id="logOpen">🩺 Journal</button>
-                <div class="version">{{ version }}</div>
-            </div>
-            <h1>🎬 Personnaliseur de Posters</h1>
-            <p>Créez vos posters personnalisés avec TheMovieDB</p>
-        </div>
+        <div id="mou-header" data-app="moufloster" data-prefix="MouFl" data-rest="oster" data-version="{{ version }}" data-emby="1"
+             data-sub="Posters personnalisés avec TheMovieDB, cadre, dégradé et textes"
+             data-actions='[{"label":"🧠 Relancer l&#39;installation de LaMa","url":"/api/lama/retry"}]'></div>
 
         <div class="content">
             <!-- GAUCHE: Controls -->
@@ -1685,26 +1677,6 @@ HTML_TEMPLATE = """
                         </div>
                     </div>
                 </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Fenêtre: journal / diagnostic (à copier-coller) -->
-    <div class="modal-overlay" id="logModal">
-        <div class="modal" style="max-width: 900px;">
-            <div class="modal-head">
-                <div>
-                    <h3>🩺 Journal et diagnostic</h3>
-                    <div class="modal-sub">État du serveur, de LaMa et dernières lignes du journal. Les clés sont masquées. Copie tout et colle-le dans la conversation.</div>
-                </div>
-                <button class="modal-close" onclick="closeLog()" aria-label="Fermer">✕</button>
-            </div>
-            <textarea id="logText" readonly spellcheck="false" aria-label="Rapport de diagnostic"></textarea>
-            <div class="lib-status" id="logStatus" style="display:none"></div>
-            <div class="lib-actions">
-                <button class="success" id="logCopy">📋 Copier tout</button>
-                <button class="secondary" id="logRefresh">🔄 Rafraîchir</button>
-                <button class="secondary" id="logLamaRetry">🧠 Relancer l'installation de LaMa</button>
             </div>
         </div>
     </div>
@@ -2032,73 +2004,6 @@ HTML_TEMPLATE = """
         }
 
         document.getElementById('langSelect').addEventListener('change', (e) => showPosters(e.target.value));
-
-        // ===== Journal / diagnostic =====
-        function logStatus(msg, kind) {
-            const el = document.getElementById('logStatus');
-            el.style.display = msg ? 'block' : 'none';
-            el.textContent = msg || '';
-            el.className = 'lib-status' + (kind ? ' ' + kind : '');
-        }
-
-        async function loadLog() {
-            const box = document.getElementById('logText');
-            box.value = 'Chargement...';
-            try {
-                const res = await fetch('/api/diagnostic');
-                const data = await res.json();
-                box.value = data.report || data.error || '(vide)';
-                box.scrollTop = box.scrollHeight;
-            } catch (err) {
-                box.value = 'Impossible de charger le rapport: ' + err.message;
-            }
-        }
-
-        function openLog() {
-            logStatus('');
-            document.getElementById('logModal').classList.add('show');
-            document.body.style.overflow = 'hidden';
-            loadLog();
-        }
-
-        function closeLog() {
-            document.getElementById('logModal').classList.remove('show');
-            document.body.style.overflow = '';
-        }
-
-        async function copyLog() {
-            const box = document.getElementById('logText');
-            let ok = false;
-            try {
-                await navigator.clipboard.writeText(box.value);
-                ok = true;
-            } catch (e) {
-                box.focus();
-                box.select();
-                try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
-            }
-            logStatus(ok ? '✅ Copié : colle-le maintenant dans la conversation.' : '⚠️ Copie automatique impossible : le texte est sélectionné, fais « Copier » à la main.', ok ? 'ok' : 'warn');
-        }
-
-        async function retryLama() {
-            const res = await fetch('/api/lama/retry', {method: 'POST'});
-            const data = await res.json();
-            logStatus(data.message || data.error, data.error ? 'err' : 'ok');
-        }
-
-        document.getElementById('logOpen').addEventListener('click', openLog);
-        document.getElementById('logRefresh').addEventListener('click', () => { logStatus(''); loadLog(); });
-        document.getElementById('logCopy').addEventListener('click', copyLog);
-        document.getElementById('logLamaRetry').addEventListener('click', retryLama);
-
-        // Les erreurs JavaScript du navigateur sont aussi envoyées au journal
-        let clientErrors = 0;
-        function reportClientError(message, where) {
-            if (clientErrors++ >= 5) return;
-            _fetch('/api/clientlog', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({message: String(message), where: where || ''})}).catch(() => {});
-        }
-        window.addEventListener('error', (e) => reportClientError(e.message, (e.filename || '') + ':' + (e.lineno || '')));
-        window.addEventListener('unhandledrejection', (e) => reportClientError('Promesse rejetée: ' + (e.reason && e.reason.message || e.reason), ''));
 
         // ===== Effacer un élément (logo, texte) =====
         const eraseState = {url: null, history: [], mask: null, drawing: false, last: null, dirty: false};
@@ -2648,7 +2553,7 @@ HTML_TEMPLATE = """
         }
 
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') { closeLibrary(); closeErase(); closeLog(); }
+            if (e.key === 'Escape') { closeLibrary(); closeErase(); }
         });
         document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('libSearch').addEventListener('keypress', (e) => {
@@ -2668,46 +2573,6 @@ HTML_TEMPLATE = """
             if (e.key === 'Enter') search();
         });
     </script>
-<script>
-/* Réglage de la clé API Emby (enregistrée sur le serveur, jamais sur GitHub) */
-(function () {
-  var css = document.createElement('style');
-  css.textContent = '#embyKeyModal{position:fixed;inset:0;background:rgba(0,0,0,.7);display:none;align-items:center;justify-content:center;padding:16px;z-index:60}#embyKeyModal.show{display:flex}#embyKeyModal .ek-box{background:var(--card,#1f1f1f);color:var(--text,#eee);border-radius:8px;width:100%;max-width:480px;padding:18px;box-sizing:border-box}#embyKeyModal h3{margin:0 0 6px}#embyKeyModal p{color:var(--muted,#999);font-size:.85rem;margin:0 0 12px}#embyKeyModal input{width:100%;box-sizing:border-box;padding:10px;border-radius:4px;border:1px solid var(--line,#444);background:var(--field,#2a2a2a);color:inherit;font-size:1rem}#embyKeyModal .ek-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}#embyKeyModal button{padding:9px 14px;border-radius:4px;border:1px solid var(--line,#444);background:var(--field,#2a2a2a);color:inherit;cursor:pointer;font-size:.9rem;width:auto}#embyKeyModal button.ek-main{background:var(--accent,#52b54b);border-color:transparent;color:#fff}#embyKeyModal .ek-msg{margin-top:10px;font-size:.9rem;min-height:1.2em}';
-  document.head.appendChild(css);
-  var m = document.createElement('div'); m.id = 'embyKeyModal';
-  m.innerHTML = '<div class="ek-box"><h3>🔑 Clé API Emby</h3><p id="ekState">…</p>' +
-    '<input id="ekInput" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Colle la nouvelle clé ici">' +
-    '<div class="ek-msg" id="ekMsg"></div><div class="ek-row"><button id="ekTest" type="button">Tester</button>' +
-    '<button id="ekSave" type="button" class="ek-main">Enregistrer</button><button id="ekClose" type="button">Fermer</button></div></div>';
-  document.body.appendChild(m);
-  var $ = function (id) { return document.getElementById(id); };
-  function msg(t, ok) { $('ekMsg').textContent = t || ''; $('ekMsg').style.color = ok ? '#7fd477' : '#ff9b94'; }
-  async function call(body) {
-    var r = await fetch('/api/settings/emby', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
-    if (r.status === 401) { location.href = '/login'; return {}; }
-    try { return await r.json(); } catch (e) { return {error: 'Erreur ' + r.status}; }
-  }
-  async function open() {
-    msg(''); $('ekInput').value = ''; m.classList.add('show');
-    try { var s = await (await fetch('/api/settings/emby')).json();
-      $('ekState').textContent = (s.configured ? 'Clé actuelle : ' + (s.hint || 'définie') : 'Aucune clé définie') + ' · Emby : ' + (s.host || '?');
-    } catch (e) { $('ekState').textContent = ''; }
-    $('ekInput').focus();
-  }
-  $('ekTest').onclick = async function () { msg('Test…', true); var r = await call({api_key: $('ekInput').value, test: true}); msg(r.message || r.error, r.ok); };
-  $('ekSave').onclick = async function () {
-    msg('Vérification…', true); var r = await call({api_key: $('ekInput').value});
-    msg(r.message || r.error, r.ok); if (r.ok) { $('ekInput').value = ''; setTimeout(function () { m.classList.remove('show'); }, 1800); }
-  };
-  $('ekClose').onclick = function () { m.classList.remove('show'); };
-  var anchor = $('logOpen');
-  if (anchor && anchor.parentNode) {
-    var b = document.createElement('button'); b.type = 'button'; b.id = 'embyKeyOpen';
-    b.className = anchor.className; b.textContent = '🔑 Clé Emby'; b.onclick = open;
-    anchor.parentNode.insertBefore(b, anchor);
-  }
-})();
-</script>
 </body>
 </html>
 """
