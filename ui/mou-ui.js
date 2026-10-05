@@ -1,6 +1,6 @@
 /* MouFlux · en-tête, fenêtre Journal et fenêtre « Clé Emby » communs aux applis.
    Page : <div id="mou-header" data-app="mouflopening" data-prefix="MouFl" data-rest="opening"
-               data-sub="…" data-version="…" data-emby="1" data-actions='[{"label":"…","url":"/api/…"}]'></div>  */
+               data-sub="…" data-version="…" data-emby="1" data-tmdb="1" data-actions='[{"label":"…","url":"/api/…"}]'></div>  */
 (function () {
   'use strict';
   var esc = function (s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]; }); };
@@ -33,6 +33,7 @@
     header.innerHTML =
       '<div class="mou-actions">' + (d.version ? '<span class="mou-ver">' + esc(d.version) + '</span>' : '') +
       (d.emby ? '<button type="button" class="mou-btn ghost small" id="mouKeyOpen">🔑 Clé Emby</button>' : '') +
+      (d.tmdb ? '<button type="button" class="mou-btn ghost small" id="mouTmdbOpen">🔑 Clé TMDB</button>' : '') +
       '<button type="button" class="mou-btn ghost small" id="mouLogOpen">🩺 Journal</button>' +
       '<form method="post" action="/logout"><button type="submit" class="mou-btn ghost small">Se déconnecter</button></form></div>' +
       '<h1 class="mou-title"><img src="/icons/' + esc(app) + '.svg" alt=""><span><span class="w">' + esc(d.prefix || 'MouFl') + '</span><span class="g">' + esc(d.rest || '') + '</span></span></h1>' +
@@ -69,26 +70,29 @@
       });
     });
 
-    // ----- Clé Emby -----
-    if (d.emby) {
-      var key = modal('mouKeyModal',
-        '<h3>🔑 Clé API Emby</h3><div class="mou-msub" id="mouKeyState">…</div>' +
-        '<input id="mouKeyInput" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Colle la nouvelle clé ici">' +
-        '<div class="mou-status" id="mouKeyMsg"></div>' +
-        '<div class="mou-actions-row"><button class="mou-btn ghost" id="mouKeyTest">Tester</button><button class="mou-btn" id="mouKeySave">Enregistrer</button><button class="mou-btn ghost" id="mouKeyClose">Fermer</button></div>', true);
-      var msg = function (t, ok) { $('mouKeyMsg').textContent = t || ''; $('mouKeyMsg').style.color = ok ? '#7fd477' : '#ff9b94'; };
-      $('mouKeyOpen').addEventListener('click', async function () {
-        msg(''); $('mouKeyInput').value = ''; open(key);
-        try { var s = await api('/api/settings/emby'); $('mouKeyState').textContent = (s.configured ? 'Clé actuelle : ' + (s.hint || 'définie') : 'Aucune clé définie') + ' · Emby : ' + (s.host || '?'); } catch (e) { $('mouKeyState').textContent = ''; }
-        $('mouKeyInput').focus();
+    // ----- Fenêtres de clés (Emby, TheMovieDB) -----
+    function keyModal(name, title, endpoint, openId) {
+      var id = 'mouKey' + name;
+      var key = modal(id + 'Modal',
+        '<h3>' + title + '</h3><div class="mou-msub" id="' + id + 'State">…</div>' +
+        '<input id="' + id + 'Input" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Colle la nouvelle clé ici">' +
+        '<div class="mou-status" id="' + id + 'Msg"></div>' +
+        '<div class="mou-actions-row"><button class="mou-btn ghost" id="' + id + 'Test">Tester</button><button class="mou-btn" id="' + id + 'Save">Enregistrer</button><button class="mou-btn ghost" id="' + id + 'Close">Fermer</button></div>', true);
+      var msg = function (t, ok) { $(id + 'Msg').textContent = t || ''; $(id + 'Msg').style.color = ok ? '#7fd477' : '#ff9b94'; };
+      $(openId).addEventListener('click', async function () {
+        msg(''); $(id + 'Input').value = ''; open(key);
+        try { var s = await api(endpoint); $(id + 'State').textContent = (s.configured ? 'Clé actuelle : ' + (s.hint || 'définie') : 'Aucune clé définie') + (s.host ? ' · Emby : ' + s.host : ''); } catch (e) { $(id + 'State').textContent = ''; }
+        $(id + 'Input').focus();
       });
-      $('mouKeyTest').addEventListener('click', async function () { msg('Test…', true); var r = await post('/api/settings/emby', {api_key: $('mouKeyInput').value, test: true}); msg(r.message || r.error, r.ok); });
-      $('mouKeySave').addEventListener('click', async function () {
-        msg('Vérification…', true); var r = await post('/api/settings/emby', {api_key: $('mouKeyInput').value}); msg(r.message || r.error, r.ok);
-        if (r.ok) { $('mouKeyInput').value = ''; setTimeout(function () { close(key); }, 1800); }
+      $(id + 'Test').addEventListener('click', async function () { msg('Test…', true); var r = await post(endpoint, {api_key: $(id + 'Input').value, test: true}); msg(r.message || r.error, r.ok); });
+      $(id + 'Save').addEventListener('click', async function () {
+        msg('Vérification…', true); var r = await post(endpoint, {api_key: $(id + 'Input').value}); msg(r.message || r.error, r.ok);
+        if (r.ok) { $(id + 'Input').value = ''; setTimeout(function () { close(key); }, 1800); }
       });
-      $('mouKeyClose').addEventListener('click', function () { close(key); });
+      $(id + 'Close').addEventListener('click', function () { close(key); });
     }
+    if (d.emby) keyModal('Emby', '🔑 Clé API Emby', '/api/settings/emby', 'mouKeyOpen');
+    if (d.tmdb) keyModal('Tmdb', '🔑 Clé API TheMovieDB', '/api/settings/tmdb', 'mouTmdbOpen');
     document.addEventListener('keydown', function (e) { if (e.key === 'Escape') document.querySelectorAll('.mou-modal.show').forEach(close); });
   }
 

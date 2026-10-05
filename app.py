@@ -118,6 +118,15 @@ diag.init_app(
 import emby_settings
 emby_settings.init_app(app, BASE_DIR, emby.base_url)
 
+
+def _set_tmdb_key(key):
+    global TMDB_API_KEY
+    TMDB_API_KEY = key
+
+
+import tmdb_settings
+tmdb_settings.init_app(app, BASE_DIR, _set_tmdb_key)
+
 # ============================================================================
 # TMDB Functions
 # ============================================================================
@@ -1545,7 +1554,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
     <div class="container">
-        <div id="mou-header" data-app="moufloster" data-prefix="MouFl" data-rest="oster" data-version="{{ version }}" data-emby="1"
+        <div id="mou-header" data-app="moufloster" data-prefix="MouFl" data-rest="oster" data-version="{{ version }}" data-emby="1" data-tmdb="1"
              data-sub="Posters personnalisés avec TheMovieDB, cadre, dégradé et textes"
              data-actions='[{"label":"🧠 Relancer l&#39;installation de LaMa","url":"/api/lama/retry"}]'></div>
 
