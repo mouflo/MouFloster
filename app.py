@@ -990,6 +990,128 @@ def api_library_apply():
     return jsonify({"success": True, **result, "emby": emby_result})
 
 
+# ---------- anciens posters d'un emplacement : voir, restaurer ----------
+
+def _backup_folder(rel, tgt):
+    shown = f"{rel}/{tgt['sub']}" if tgt["sub"] else rel
+    root = Path(BACKUP_ROOT).resolve()
+    d = (root / shown).resolve()
+    return d if (d == root or root in d.parents) else None
+
+
+def _poster_backups(rel, tgt):
+    d = _backup_folder(rel, tgt)
+    if d is None or not d.is_dir():
+        return []
+    pat = re.compile(re.escape(tgt["name"][:-4]) + r"\.(\d{8})-(\d{6})(?:-\d+)?\.jpg$")
+    out = []
+    for f in d.iterdir():
+        m = pat.match(f.name)
+        if m and f.is_file():
+            day, t = m.group(1), m.group(2)
+            out.append({"id": str(f.relative_to(Path(BACKUP_ROOT).resolve())), "date": f"{day[6:8]}/{day[4:6]}/{day[:4]} {t[:2]}:{t[2:4]}", "key": f.name})
+    out.sort(key=lambda b: b["key"], reverse=True)
+    return out
+
+
+def _backup_path(backup_id):
+    root = Path(BACKUP_ROOT).resolve()
+    p = (root / str(backup_id or "")).resolve()
+    if root not in p.parents or p.suffix.lower() != ".jpg" or not p.is_file():
+        return None
+    return p
+
+
+@app.route("/api/library/backups", methods=["POST"])
+def api_library_backups():
+    data = request.get_json(silent=True) or {}
+    media_type = "tv" if data.get("media_type") == "tv" else "movie"
+    try:
+        tgt = library.resolve_target(data.get("rel"), media_type, data.get("season_text"), data.get("episode_text"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"backups": _poster_backups(data.get("rel"), tgt)})
+
+
+@app.route("/api/library/backup-file")
+def api_library_backup_file():
+    p = _backup_path(request.args.get("id"))
+    if p is None:
+        return jsonify({"error": "Fichier introuvable"}), 404
+    return send_file(p, mimetype="image/jpeg")
+
+
+@app.route("/api/library/restore", methods=["POST"])
+def api_library_restore():
+    """Remet un ancien poster en place (le poster actuel est sauvegardé avant, comme pour un remplacement)."""
+    data = request.get_json(silent=True) or {}
+    target_type = "tv" if data.get("target_type") == "tv" else "movie"
+    media_type = "tv" if data.get("media_type") == "tv" else "movie"
+    rel = data.get("rel")
+    try:
+        tgt = library.resolve_target(rel, target_type, data.get("season_text"), data.get("episode_text"))
+        if not any(b["id"] == data.get("id") for b in _poster_backups(rel, tgt)):
+            raise ValueError("Cet ancien poster n'appartient pas à cet emplacement")
+        src = _backup_path(data.get("id"))
+        if src is None:
+            raise ValueError("Ancien poster introuvable")
+        exists = (library.resolve_dir(rel, tgt["sub"]) / tgt["name"]).exists()
+        result = library.apply_poster(str(src), rel, tgt["name"], "replace" if exists else "copy", BACKUP_ROOT,
+                                      sub=tgt["sub"], episode=tgt["episode"])
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except OSError as e:
+        logger.error(f"Erreur restauration médiathèque: {e}")
+        return jsonify({"error": f"Écriture impossible: {e}"}), 500
+    logger.info(f"↩️ Médiathèque: ancien poster restauré {result['written']} (depuis {data.get('id')})")
+    emby_result = None
+    if data.get("refresh_emby") and emby.configured():
+        tmdb_for_emby = _to_int(data.get("tmdb_id")) if target_type == media_type else None
+        emby_result = emby.refresh_for(target_type, tmdb_for_emby, rel, [data.get("title"), data.get("original_title")],
+                                       data.get("season_text"), data.get("episode_text") if tgt["episode"] else None)
+    return jsonify({"success": True, **result, "emby": emby_result})
+
+
+# ---------- mises en page mémorisées (pour reprendre un poster plus tard) ----------
+LAYOUTS_FILE = BASE_DIR / "data" / "layouts.json"
+_layouts_lock = threading.Lock()
+
+
+def _read_layouts():
+    try:
+        data = json.loads(LAYOUTS_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+@app.route("/api/layout")
+def api_layout_get():
+    key = f"{request.args.get('media_type', '')}:{request.args.get('tmdb_id', '')}"
+    return jsonify({"layout": _read_layouts().get(key)})
+
+
+@app.route("/api/layout", methods=["POST"])
+def api_layout_save():
+    data = request.get_json(silent=True) or {}
+    mt, tid, layout = str(data.get("media_type", "")), str(data.get("tmdb_id", "")), data.get("layout")
+    if mt not in ("movie", "tv", "collection") or not tid.isdigit() or not isinstance(layout, dict):
+        return jsonify({"error": "Mise en page invalide"}), 400
+    if len(json.dumps(layout)) > 20000:
+        return jsonify({"error": "Mise en page trop grande"}), 400
+    with _layouts_lock:
+        layouts = _read_layouts()
+        layouts.pop(f"{mt}:{tid}", None)
+        layouts[f"{mt}:{tid}"] = {**layout, "saved": datetime.now().strftime("%d/%m/%Y %H:%M")}
+        while len(layouts) > 200:                        # on garde les 200 dernières
+            layouts.pop(next(iter(layouts)))
+        LAYOUTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = LAYOUTS_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(layouts, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, LAYOUTS_FILE)
+    return jsonify({"ok": True})
+
+
 # ============================================================================
 # HTML Template
 # ============================================================================
@@ -1591,6 +1713,23 @@ HTML_TEMPLATE = """
         .lib-compare figcaption { font-size: 0.8em; color: #555; margin-top: 6px; line-height: 1.35; }
         .lib-compare figcaption b { color: #222; }
         .lib-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+        .layout-btn { width: 100%; margin: 6px 0 10px; }
+        .result-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .batch-add { width: auto !important; padding: 4px 10px !important; font-size: 0.8em !important; flex: none; margin: 0 !important; }
+        .batch-hint { color: var(--muted); font-size: 0.82em; margin-bottom: 10px; }
+        .batch-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--line); }
+        .batch-thumb { width: 64px; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 4px; cursor: pointer; flex: none; background: var(--field); }
+        .batch-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+        .batch-name { font-weight: 600; font-size: 0.9em; }
+        .batch-info input { padding: 6px 8px; font-size: 0.85em; }
+        .batch-status { font-size: 0.78em; color: var(--muted); word-break: break-word; }
+        .batch-del { width: auto !important; padding: 4px 8px !important; flex: none; }
+        .batch-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+        .lib-backups { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
+        .lib-backups figure { margin: 0; text-align: center; }
+        .lib-backups img { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 4px; display: block; }
+        .lib-backups figcaption { font-size: 0.75em; color: var(--muted); margin: 4px 0; }
+        .lib-backups button { width: 100%; padding: 6px 4px; font-size: 0.8em; }
         button.danger { background: linear-gradient(135deg, #e0524d 0%, #b8302b 100%); }
         button.danger:disabled, .lib-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
         @media (min-width: 768px) {
@@ -1690,6 +1829,17 @@ HTML_TEMPLATE = """
                     <div id="results" class="results-list"></div>
                 </div>
 
+                <!-- Lot de posters -->
+                <div class="section" id="batchPanel" style="display:none">
+                    <h3>📦 Lot de posters <span id="batchCount"></span></h3>
+                    <div class="batch-hint">Chaque titre garde son affiche et ses textes ; le cadre et le dégradé choisis à droite valent pour tout le lot. Seuls les titres dont le dossier est trouvé avec certitude sont envoyés (l'ancien poster est sauvegardé) ; les autres restent à faire à la main.</div>
+                    <div id="batchList"></div>
+                    <div class="batch-actions">
+                        <button id="batchSend" onclick="batchSendAll()">📤 Envoyer tout le lot vers la médiathèque</button>
+                        <button class="secondary" onclick="batchClear()">Vider le lot</button>
+                    </div>
+                </div>
+
                 <!-- Posters -->
                 <div class="section">
                     <h3>🖼️ Posters</h3>
@@ -1699,6 +1849,7 @@ HTML_TEMPLATE = """
                         <input type="file" id="uploadFile" accept="image/*" style="display:none" />
                         <button type="button" class="secondary" id="eraseOpen">🧽 Effacer un élément</button>
                     </div>
+                    <div id="layoutBar"></div>
                     <div class="loading" id="postersLoading">Chargement...</div>
                     <div id="posters" class="results"></div>
                 </div>
@@ -1910,6 +2061,7 @@ HTML_TEMPLATE = """
             </div>
 
             <div class="lib-actions" id="libActions"></div>
+            <div id="libBackups"></div>
         </div>
     </div>
 
@@ -2050,6 +2202,12 @@ HTML_TEMPLATE = """
                     const div = document.createElement('div');
                     div.className = 'result-item';
                     div.textContent = (item.media_type === 'collection' ? '📚 ' : '') + item.title + (item.year !== '?' ? ` (${item.year})` : '') + (item.media_type === 'collection' ? ' · saga' : '');
+                    if (item.media_type !== 'collection') {          // les sagas vont directement dans Emby : pas dans le lot
+                        const add = document.createElement('button');
+                        add.type = 'button'; add.className = 'batch-add'; add.textContent = '➕ Lot'; add.title = 'Ajouter au lot de posters';
+                        add.addEventListener('click', ev => { ev.stopPropagation(); batchAdd(item); });
+                        div.appendChild(add);
+                    }
                     div.addEventListener('click', () => {
                         // clic sur le titre déjà choisi (liste refermée): on rouvre la liste pour en changer
                         if (div.classList.contains('active') && resultsDiv.classList.contains('collapsed')) {
@@ -2107,7 +2265,133 @@ HTML_TEMPLATE = """
             generatePreview();
         }
 
+        // ===== Lot de posters : plusieurs titres d'un coup, même cadre et même dégradé =====
+        const batch = [];
+        function batchSplitTitle(t) {
+            t = (t || '').trim();
+            const m = t.match(/^(.+?)\\s*(?::| - | – )\\s*(.+)$/);
+            if (m) return [m[1], m[2]];
+            if (t.length <= 16) return [t, ''];
+            const words = t.split(' '); let best = 1, bestDiff = 1e9;
+            for (let i = 1; i < words.length; i++) { const d = Math.abs(words.slice(0, i).join(' ').length - words.slice(i).join(' ').length); if (d < bestDiff) { bestDiff = d; best = i; } }
+            return [words.slice(0, best).join(' '), words.slice(best).join(' ')];
+        }
+        async function batchAdd(item) {
+            if (batch.some(b => b.item.id === item.id && b.item.media_type === item.media_type)) return showMessage('Déjà dans le lot', 'error');
+            const [l2, l3] = batchSplitTitle(item.title);
+            const entry = {item, posters: [], poster: null, l2, l3, status: '⏳ chargement des affiches…'};
+            batch.push(entry); batchRender();
+            try {
+                const data = await (await fetch('/api/posters', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: item.id, media_type: item.media_type})})).json();
+                const all = data.posters || [];
+                const pref = all.filter(p => p.lang === '').concat(all.filter(p => p.lang === 'fr'), all.filter(p => p.lang !== '' && p.lang !== 'fr'));
+                entry.posters = pref.slice(0, 12); entry.poster = entry.posters[0] || null;
+                entry.status = entry.poster ? '' : '❌ aucune affiche sur TheMovieDB';
+            } catch (e) { entry.status = '❌ affiches indisponibles'; }
+            batchRender();
+        }
+        function batchClear() { batch.length = 0; batchRender(); }
+        function batchRender() {
+            document.getElementById('batchPanel').style.display = batch.length ? 'block' : 'none';
+            document.getElementById('batchCount').textContent = batch.length ? '(' + batch.length + ')' : '';
+            const list = document.getElementById('batchList'); list.innerHTML = '';
+            batch.forEach((b, i) => {
+                const row = document.createElement('div'); row.className = 'batch-item';
+                const thumb = document.createElement('img'); thumb.className = 'batch-thumb'; thumb.alt = '';
+                if (b.poster) thumb.src = b.poster.url;
+                thumb.title = 'Clique pour changer d’affiche';
+                thumb.onclick = () => { if (b.posters.length > 1) { const k = b.posters.indexOf(b.poster); b.poster = b.posters[(k + 1) % b.posters.length]; batchRender(); } };
+                const info = document.createElement('div'); info.className = 'batch-info';
+                const name = document.createElement('div'); name.className = 'batch-name'; name.textContent = b.item.title + (b.item.year && b.item.year !== '?' ? ' (' + b.item.year + ')' : '') + (b.item.media_type === 'tv' ? ' · série' : ' · film');
+                const in2 = document.createElement('input'); in2.value = b.l2; in2.placeholder = 'Ligne 2 (titre)'; in2.oninput = () => { b.l2 = in2.value; };
+                const in3 = document.createElement('input'); in3.value = b.l3; in3.placeholder = 'Ligne 3 (suite, facultatif)'; in3.oninput = () => { b.l3 = in3.value; };
+                const st = document.createElement('div'); st.className = 'batch-status'; st.textContent = b.status || (b.posters.length > 1 ? '↻ clique sur l’affiche pour en changer (' + b.posters.length + ')' : '');
+                const del = document.createElement('button'); del.type = 'button'; del.className = 'secondary batch-del'; del.textContent = '✕'; del.title = 'Retirer du lot';
+                del.onclick = () => { batch.splice(i, 1); batchRender(); };
+                info.append(name, in2, in3, st);
+                row.append(thumb, info, del); list.appendChild(row);
+            });
+        }
+        async function batchPost(url, body) {
+            const res = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+            return res.json();
+        }
+        async function batchSendAll() {
+            const todo = batch.filter(b => b.poster && !b.done);
+            if (!todo.length) return showMessage('Rien à envoyer : ajoute des titres avec une affiche', 'error');
+            if (!confirm('Envoyer ' + todo.length + ' poster(s) vers la médiathèque ? Les anciens posters seront sauvegardés.')) return;
+            const btn = document.getElementById('batchSend'); btn.disabled = true;
+            let sent = 0, manual = 0;
+            for (const b of todo) {
+                try {
+                    b.status = '🎨 création du poster…'; batchRender();
+                    const saved = await batchPost('/api/save', {
+                        poster_url: b.poster.url, title: b.item.title,
+                        border_style: document.getElementById('borderAnime').checked ? 'anime' : 'standard',
+                        show_gradient: document.getElementById('showGradient').checked,
+                        text_1: '', text_2: b.l2, text_3: b.l3, text_4: '', text_5: '', season: '', crop_x: 0.5, crop_y: 0.5, zoom: 1});
+                    if (saved.error) throw new Error(saved.error);
+                    b.saved = saved.filename;
+                    b.status = '🔎 recherche du dossier…'; batchRender();
+                    const m = await batchPost('/api/library/match', {media_type: b.item.media_type, tmdb_id: b.item.id, title: b.item.title,
+                        original_title: b.item.original_title || '', year: b.item.year, season_text: ''});
+                    if (m.error) throw new Error(m.error);
+                    if (!m.selected || !['sur', 'memorise'].includes(m.confidence)) {
+                        b.status = '✋ dossier incertain : poster enregistré (' + saved.filename + '), à envoyer à la main'; manual++; batchRender(); continue;
+                    }
+                    const cand = (m.candidates || []).find(c => c.rel === m.selected) || {};
+                    const r = await batchPost('/api/library/apply', {saved_filename: saved.filename, rel: m.selected, action: 'replace',
+                        media_type: b.item.media_type, target_type: cand.media_type || b.item.media_type, tmdb_id: b.item.id,
+                        title: b.item.title, original_title: b.item.original_title || '', refresh_emby: true, season_text: '', episode_text: ''});
+                    if (r.error) throw new Error(r.error);
+                    b.done = true; sent++;
+                    b.status = '✅ ' + r.written + (r.backup ? ' (ancien sauvegardé)' : '') + (r.emby ? (r.emby.ok ? ' · 🔄 Emby' : ' · ⚠️ ' + r.emby.message) : '');
+                } catch (err) { b.status = '❌ ' + err.message; }
+                batchRender();
+            }
+            btn.disabled = false;
+            showMessage('Lot terminé : ' + sent + ' envoyé(s)' + (manual ? ', ' + manual + ' à faire à la main' : ''), sent ? 'success' : 'error');
+        }
+
+        // ===== Mise en page mémorisée : reprendre un poster plus tard =====
+        const LAYOUT_CHECKS = ['borderAnime', 'showGradient', 'text1Enabled', 'text2Enabled', 'text3Enabled', 'text4Enabled', 'text5Enabled', 'seasonEnabled', 'seasonSpecial'];
+        const LAYOUT_VALUES = ['text1', 'text2', 'text3', 'text4', 'text5', 'season', 'cropX', 'cropY', 'zoom'];
+        function captureLayout() {
+            const l = {poster: selectedPoster, checks: {}, values: {}};
+            LAYOUT_CHECKS.forEach(id => { l.checks[id] = document.getElementById(id).checked; });
+            LAYOUT_VALUES.forEach(id => { l.values[id] = document.getElementById(id).value; });
+            return l;
+        }
+        function applyLayout(l) {
+            Object.entries(l.checks || {}).forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.checked = !!v; });
+            Object.entries(l.values || {}).forEach(([id, v]) => { const el = document.getElementById(id); if (el) { el.value = v; el.dispatchEvent(new Event('input')); } });
+            const en = document.getElementById('seasonEnabled');
+            document.getElementById('season').disabled = !en.checked || document.getElementById('seasonSpecial').checked;
+            if (l.poster) { selectedPoster = l.poster; document.querySelectorAll('.poster-thumb').forEach(el => el.classList.toggle('selected', el.src === l.poster.url)); }
+            generatePreview();
+        }
+        async function rememberLayout() {
+            if (!selectedItem || !selectedPoster) return;
+            try {
+                await fetch('/api/layout', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({tmdb_id: selectedItem.id, media_type: selectedItem.media_type, layout: captureLayout()})});
+            } catch (e) {}
+        }
+        async function offerLayout(item) {
+            const bar = document.getElementById('layoutBar');
+            bar.innerHTML = '';
+            let data = {};
+            try { data = await (await fetch('/api/layout?tmdb_id=' + encodeURIComponent(item.id) + '&media_type=' + encodeURIComponent(item.media_type))).json(); } catch (e) { return; }
+            if (!data.layout || selectedItem !== item) return;
+            const b = document.createElement('button');
+            b.type = 'button'; b.className = 'secondary layout-btn';
+            b.textContent = '♻️ Reprendre la dernière mise en page' + (data.layout.saved ? ' (' + data.layout.saved + ')' : '');
+            b.onclick = () => { applyLayout(data.layout); bar.innerHTML = ''; showMessage('Mise en page reprise : vérifie l’aperçu', 'success'); };
+            bar.appendChild(b);
+        }
+
         async function loadPosters(item) {
+            offerLayout(item);
             selectedPoster = null;              // nouveau titre : l'affiche de l'ancien titre n'est plus choisie
             document.getElementById('previewImage').innerHTML = '<div class="preview-placeholder">Aperçu</div>';
             document.getElementById('postersLoading').classList.add('show');
@@ -2442,6 +2726,7 @@ HTML_TEMPLATE = """
                     showMessage('Erreur: ' + data.error, 'error');
                     return null;
                 }
+                rememberLayout();          // pour pouvoir reprendre ce poster plus tard
                 return data;
             } catch (err) {
                 showMessage('Erreur: ' + err.message, 'error');
@@ -2723,6 +3008,43 @@ HTML_TEMPLATE = """
                 add('Copier ici', 'success', () => libApply('copy'));
             }
             add('Annuler', 'secondary', closeLibrary);
+            libLoadBackups(rel);
+        }
+
+        // Anciens posters de cet emplacement (sauvegardés à chaque remplacement) : on peut en remettre un
+        async function libLoadBackups(rel) {
+            const box = document.getElementById('libBackups');
+            box.innerHTML = '';
+            const body = {rel, media_type: libType(), season_text: libType() === 'tv' ? libSeasonText() : '', episode_text: libEpisodeText()};
+            let data = {};
+            try { data = await (await fetch('/api/library/backups', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})).json(); } catch (e) { return; }
+            if (document.getElementById('libFolder').value !== rel || !(data.backups || []).length) return;
+            box.innerHTML = '<div class="lib-field"><label>🕘 Anciens posters de cet emplacement (' + data.backups.length + ')</label><div class="lib-backups"></div></div>';
+            const list = box.querySelector('.lib-backups');
+            data.backups.forEach(b => {
+                const fig = document.createElement('figure');
+                const img = document.createElement('img'); img.loading = 'lazy'; img.alt = 'Ancien poster'; img.src = '/api/library/backup-file?id=' + encodeURIComponent(b.id);
+                const cap = document.createElement('figcaption'); cap.textContent = b.date;
+                const btn = document.createElement('button'); btn.className = 'secondary'; btn.textContent = '↩️ Restaurer';
+                btn.onclick = () => libRestore(rel, b.id, btn);
+                fig.append(img, cap, btn); list.appendChild(fig);
+            });
+        }
+        async function libRestore(rel, id, btn) {
+            if (!confirm('Remettre cet ancien poster ? Le poster actuel sera sauvegardé avant (rien n’est supprimé).')) return;
+            btn.disabled = true; libSetStatus('Restauration en cours...');
+            try {
+                const res = await fetch('/api/library/restore', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
+                    rel, id, target_type: libType(), media_type: selectedItem.media_type, tmdb_id: selectedItem.id, title: selectedItem.title,
+                    original_title: selectedItem.original_title || '', refresh_emby: document.getElementById('libEmby').checked,
+                    season_text: libType() === 'tv' ? libSeasonText() : '', episode_text: libEpisodeText()})});
+                const data = await res.json();
+                if (data.error) { btn.disabled = false; return libSetStatus('❌ ' + data.error, 'err'); }
+                let msg = '✅ Ancien poster remis : ' + data.written + (data.backup ? ' (le poster remplacé est sauvegardé)' : '');
+                if (data.emby) msg += (data.emby.ok ? ' — 🔄 ' : ' — ⚠️ ') + data.emby.message;
+                await libInspect();
+                libSetStatus(msg, 'ok');
+            } catch (err) { btn.disabled = false; libSetStatus('❌ ' + err.message, 'err'); }
         }
 
         async function libApply(action) {

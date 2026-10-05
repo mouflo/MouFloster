@@ -33,6 +33,14 @@ reconstruction complète après une migration/panne, voir [`INSTALL.md`](INSTALL
 
 ![La page Réglages : adresse et clé d'Emby, clé TheMovieDB, dossiers](docs/screenshots/reglages.png)
 
+**Les anciens posters d'un emplacement, à restaurer d'un clic**
+
+![Les anciens posters d'un emplacement](docs/screenshots/restaurer.png)
+
+**Le lot de posters : plusieurs titres envoyés d'un coup**
+
+![Le lot de posters](docs/screenshots/lot.png)
+
 **Sur téléphone**
 
 ![Sur téléphone](docs/screenshots/mobile.png)
@@ -48,6 +56,9 @@ reconstruction complète après une migration/panne, voir [`INSTALL.md`](INSTALL
   - Numéro de saison/épisode
 - 👁️ **Aperçu en temps réel** : Vois le résultat immédiatement
 - 💾 **Sauvegarde JPEG** : Exporte tes posters personnalisés (1000×1500 px)
+- 🕘 **Restaurer un ancien poster** : chaque remplacement garde l'ancien poster ; la fenêtre d'envoi les montre et en remet un d'un clic (le poster actuel est sauvegardé avant)
+- ♻️ **Reprendre une mise en page** : affiche, recadrage, zoom, textes, cadre et dégradé sont retenus à chaque enregistrement ; en rouvrant le titre, « Reprendre la dernière mise en page » remet tout comme avant
+- 📦 **Lot de posters** : « ➕ Lot » sur plusieurs résultats, une affiche et deux lignes de titre par film/série, puis « Envoyer tout le lot » (seuls les dossiers trouvés avec certitude sont remplacés, anciens posters sauvegardés ; les autres restent à faire à la main)
 - 📚 **Sagas** : cherche aussi les sagas TheMovieDB (« Harry Potter - Saga »…) ; leur affiche est envoyée directement dans la collection Emby correspondante (l'ancienne affiche est sauvegardée dans `_anciens-posters/_sagas`)
 - ⚙️ **Page Réglages** : adresse et clé d'Emby, clé TheMovieDB et dossiers se règlent depuis le navigateur (même page que dans MouFlopening et MouFlanimeXer)
 
@@ -145,10 +156,7 @@ pip install --upgrade flask pillow requests
 ## 🗺️ Feuille de route
 
 - [ ] Auto-classification dans Emby/Jellyfin
-- [ ] Traitement par lots (plusieurs posters)
 - [ ] Polices personnalisées
-- [ ] Historique des posters générés
-- [ ] Préréglages / modèles
 
 ## 📝 Licence
 
