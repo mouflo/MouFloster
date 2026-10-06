@@ -56,6 +56,7 @@ except ImportError:
     pass  # python-dotenv non installé, utiliser les variables d'environnement système
 
 import library
+import mouflanga_link
 import emby
 
 app = Flask(__name__)
@@ -988,6 +989,48 @@ def api_library_apply():
                                        data.get("episode_text") if tgt["episode"] else None)
         logger.info(f"🔄 Emby: {emby_result}")
     return jsonify({"success": True, **result, "emby": emby_result})
+
+
+# ---------- MouFlanga : le poster devient la couverture d'une série de mangas ----------
+
+@app.route("/api/mouflanga/series", methods=["POST"])
+def api_mouflanga_series():
+    """Séries de MouFlanga, avec celle qui ressemble le plus au titre du poster."""
+    data = request.get_json(silent=True) or {}
+    if not mouflanga_link.installe():
+        return jsonify({"error": "MouFlanga n'est pas installé sur ce serveur."}), 404
+    racine = mouflanga_link.manga_dir()
+    if not racine.is_dir():
+        return jsonify({"error": f"Dossier des mangas introuvable : {racine} (le partage est-il monté ?)"}), 500
+    liste = mouflanga_link.series()
+    titres = [t for t in (data.get("title"), data.get("original_title")) if t]
+    return jsonify({"series": liste, "selected": mouflanga_link.meilleure([x["name"] for x in liste], titres)})
+
+
+@app.route("/api/mouflanga/cover")
+def api_mouflanga_cover():
+    """Couverture actuelle d'une série MouFlanga (aperçu avant remplacement)."""
+    dossier = mouflanga_link.dossier_serie(request.args.get("name", ""))
+    if dossier is None or not (dossier / mouflanga_link.COUVERTURE).is_file():
+        return jsonify({"error": "Pas de couverture choisie"}), 404
+    resp = send_file(dossier / mouflanga_link.COUVERTURE, mimetype="image/jpeg")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.route("/api/mouflanga/apply", methods=["POST"])
+def api_mouflanga_apply():
+    data = request.get_json(silent=True) or {}
+    saved = os.path.basename(data.get("saved_filename") or "")
+    try:
+        result = mouflanga_link.appliquer(os.path.join(OUTPUT_BASE, saved), data.get("name", ""), BACKUP_ROOT)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except OSError as e:
+        logger.error(f"Erreur copie MouFlanga: {e}")
+        return jsonify({"error": f"Écriture impossible: {e}"}), 500
+    logger.info(f"📚 MouFlanga: {result['written']} (sauvegarde={result['backup']})")
+    return jsonify({"success": True, **result})
 
 
 # ---------- anciens posters d'un emplacement : voir, restaurer ----------
@@ -1952,6 +1995,7 @@ HTML_TEMPLATE = """
                             <button class="secondary" onclick="generatePreview()">Rafraîchir</button>
                             <button class="success" onclick="savePoster()">💾 Sauvegarder et télécharger</button>
                             <button onclick="sendToLibrary()">📁 Envoyer vers la médiathèque</button>
+                            <button onclick="sendToMouflanga()">📚 Couverture dans MouFlanga</button>
                         </div>
                     </div>
                 </div>
@@ -1983,6 +2027,29 @@ HTML_TEMPLATE = """
                 <button class="secondary" id="eraseUndo" disabled>↩ Annuler le dernier effacement</button>
                 <button class="success" id="eraseUse">Utiliser ce poster</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Fenêtre: couverture d'une série MouFlanga -->
+    <div class="modal-overlay" id="mfgModal">
+        <div class="modal">
+            <div class="modal-head">
+                <div>
+                    <h3>📚 Couverture dans MouFlanga</h3>
+                    <div class="modal-sub">Le poster devient la couverture de la série dans ta bibliothèque de mangas (l'ancienne est sauvegardée).</div>
+                </div>
+                <button class="modal-close" onclick="closeMouflanga()" aria-label="Fermer">✕</button>
+            </div>
+            <div class="lib-status" id="mfgStatus"></div>
+            <div class="lib-field">
+                <label for="mfgSelect">Série dans MouFlanga</label>
+                <select id="mfgSelect" onchange="mfgShowOld()"></select>
+            </div>
+            <div class="lib-compare">
+                <figure><div class="frame" id="mfgOldFrame"></div><figcaption><b>Actuelle</b><br>dans MouFlanga</figcaption></figure>
+                <figure><div class="frame"><img id="mfgNewImg" alt="Nouvelle couverture" /></div><figcaption><b>Nouvelle</b><br>celle que tu viens de créer</figcaption></figure>
+            </div>
+            <div class="lib-actions"><button id="mfgApply" onclick="mfgApply()">🖼️ Mettre en couverture</button><button class="secondary" onclick="closeMouflanga()">Annuler</button></div>
         </div>
     </div>
 
@@ -2759,6 +2826,60 @@ HTML_TEMPLATE = """
             else openLibrary(data.filename);
         }
 
+        // ===== MouFlanga : le poster devient la couverture d'une série de mangas =====
+        let mfgState = {saved: null, series: []};
+        function mfgStatus(msg, kind) { const el = document.getElementById('mfgStatus'); el.textContent = msg; el.className = 'lib-status' + (kind ? ' ' + kind : ''); }
+        async function sendToMouflanga() {
+            const data = await saveToServer();
+            if (!data) return;
+            mfgState = {saved: data.filename, series: []};
+            document.getElementById('mfgNewImg').src = '/api/download/' + encodeURIComponent(data.filename) + '?inline=1&t=' + Date.now();
+            document.getElementById('mfgSelect').innerHTML = '';
+            document.getElementById('mfgOldFrame').innerHTML = '';
+            document.getElementById('mfgApply').disabled = true;
+            document.getElementById('mfgModal').classList.add('show');
+            document.body.style.overflow = 'hidden';
+            mfgStatus('Lecture de la bibliothèque MouFlanga...');
+            try {
+                const res = await fetch('/api/mouflanga/series', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({title: selectedItem.title, original_title: selectedItem.original_title || ''})});
+                const r = await res.json();
+                if (!res.ok || r.error) throw new Error(r.error || 'Erreur ' + res.status);
+                if (!r.series.length) { mfgStatus('Aucune série dans MouFlanga pour le moment.', 'err'); return; }
+                mfgState.series = r.series;
+                const sel = document.getElementById('mfgSelect');
+                r.series.forEach(x => { const o = document.createElement('option'); o.value = x.name; o.textContent = x.name + (x.name === r.selected ? '  ✓' : ''); sel.appendChild(o); });
+                if (r.selected) sel.value = r.selected;
+                mfgStatus(r.selected ? 'Série trouvée : vérifie puis valide.' : 'Choisis la série dans la liste.', r.selected ? 'ok' : '');
+                document.getElementById('mfgApply').disabled = false;
+                mfgShowOld();
+            } catch (err) { mfgStatus('❌ ' + err.message, 'err'); }
+        }
+        function mfgShowOld() {
+            const nom = document.getElementById('mfgSelect').value, frame = document.getElementById('mfgOldFrame');
+            const s = mfgState.series.find(x => x.name === nom);
+            frame.innerHTML = '';
+            if (s && s.cover) { const img = document.createElement('img'); img.alt = 'Couverture actuelle'; img.src = '/api/mouflanga/cover?name=' + encodeURIComponent(nom) + '&t=' + Date.now(); frame.appendChild(img); }
+            else frame.innerHTML = '<div class="empty">Couverture automatique<br>(1re page du 1er chapitre)</div>';
+        }
+        async function mfgApply() {
+            const nom = document.getElementById('mfgSelect').value, btn = document.getElementById('mfgApply');
+            if (!nom) return;
+            btn.disabled = true; mfgStatus('Envoi...');
+            try {
+                const res = await fetch('/api/mouflanga/apply', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({saved_filename: mfgState.saved, name: nom})});
+                const r = await res.json();
+                if (!res.ok || r.error) throw new Error(r.error || 'Erreur ' + res.status);
+                closeMouflanga();
+                showMessage('📚 Couverture de « ' + nom + ' » changée dans MouFlanga' + (r.backup ? ' (ancienne sauvegardée)' : ''), 'success');
+            } catch (err) { mfgStatus('❌ ' + err.message, 'err'); btn.disabled = false; }
+        }
+        function closeMouflanga() {
+            document.getElementById('mfgModal').classList.remove('show');
+            document.body.style.overflow = '';
+        }
+
         // ===== Sagas : l'affiche est envoyée directement à Emby (collection) =====
         let sagaState = {saved: null, cands: []};
         function sagaStatus(msg, kind) { const el = document.getElementById('sagaStatus'); el.textContent = msg; el.className = 'lib-status' + (kind ? ' ' + kind : ''); }
@@ -3096,7 +3217,7 @@ HTML_TEMPLATE = """
         }
 
         document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') { closeLibrary(); closeErase(); closeSaga(); }
+            if (e.key === 'Escape') { closeLibrary(); closeErase(); closeSaga(); closeMouflanga(); }
         });
         document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('libSearch').addEventListener('keypress', (e) => {
