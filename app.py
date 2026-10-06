@@ -2047,6 +2047,17 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
+    <!-- Fenêtre: couverture envoyée dans MouFlanga -->
+    <div class="modal-overlay" id="mfgFiniModal">
+        <div class="modal" style="max-width:420px">
+            <div class="modal-head"><div><h3>✅ Couverture envoyée</h3><div class="modal-sub" id="mfgFiniTexte"></div></div></div>
+            <div class="lib-actions">
+                <a id="mfgFiniRetour" class="mfg-retour" hidden>↩ Retour à MouFlanga</a>
+                <button class="secondary" id="mfgFiniFermer" onclick="document.getElementById('mfgFiniModal').classList.remove('show')">OK</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Fenêtre: couverture d'une série MouFlanga -->
     <div class="modal-overlay" id="mfgModal">
         <div class="modal">
@@ -2299,6 +2310,7 @@ HTML_TEMPLATE = """
                             return;
                         }
                         selectedItem = item;
+                        preremplirTitre(item.title);
                         loadPosters(item);
                         document.querySelectorAll('.result-item').forEach(el => el.classList.remove('active'));
                         div.classList.add('active');
@@ -2693,12 +2705,21 @@ HTML_TEMPLATE = """
             document.getElementById('eraseUse').addEventListener('click', eraseUse);
         })();
 
+        // Ligne 2 (titre principal) : remplie avec le nom choisi, seulement si elle est vide
+        function preremplirTitre(nom) {
+            const champ = document.getElementById('text2'), case2 = document.getElementById('text2Enabled');
+            if (!nom || champ.value.trim()) return;
+            champ.value = nom;
+            if (!case2.checked) { case2.checked = true; case2.dispatchEvent(new Event('change')); }
+        }
+
         // Titre « libre » : pas de fiche TheMovieDB, juste un nom
         function elementLibre() {
             let nom = (mfgVenue.serie || document.getElementById('searchQuery').value || '').trim();
             if (!nom) nom = (prompt('Nom du manga, du film ou de la série (pour nommer le poster) :') || '').trim();
             if (!nom) return null;
             const item = {id: null, title: nom, original_title: '', media_type: 'tv', year: '?', libre: true};
+            preremplirTitre(nom);
             const res = document.getElementById('results');
             res.innerHTML = '';
             const div = document.createElement('div');
@@ -2928,7 +2949,16 @@ HTML_TEMPLATE = """
                 closeMouflanga();
                 showMessage('📚 Couverture de « ' + nom + ' » changée dans MouFlanga' + (r.backup ? ' (ancienne sauvegardée)' : ''), 'success');
                 if (mfgVenue.retour) mfgBandeau(true);
+                mfgFini(nom, r.backup);
             } catch (err) { mfgStatus('❌ ' + err.message, 'err'); btn.disabled = false; }
+        }
+        // Fenêtre de fin : bien visible, avec le bouton pour revenir sur la série dans MouFlanga
+        function mfgFini(nom, sauvegarde) {
+            document.getElementById('mfgFiniTexte').textContent = 'La couverture de « ' + nom + ' » est dans MouFlanga' + (sauvegarde ? ' (l’ancienne est sauvegardée).' : '.');
+            const a = document.getElementById('mfgFiniRetour');
+            a.hidden = !mfgVenue.retour; if (mfgVenue.retour) a.href = mfgVenue.retour;
+            document.getElementById('mfgFiniFermer').textContent = mfgVenue.retour ? 'Rester dans MouFloster' : 'OK';
+            document.getElementById('mfgFiniModal').classList.add('show');
         }
         function closeMouflanga() {
             document.getElementById('mfgModal').classList.remove('show');
