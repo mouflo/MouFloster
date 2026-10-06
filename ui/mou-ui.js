@@ -103,6 +103,67 @@
   window.addEventListener('error', function (e) { report(e.message, (e.filename || '') + ':' + (e.lineno || '')); });
   window.addEventListener('unhandledrejection', function (e) { report('Promesse rejetée : ' + (e.reason && e.reason.message || e.reason), ''); });
 
-  function init() { var host = $('mou-header'); if (host) build(host); }
+  // ----- Messages toujours visibles -----
+  // Quand un message apparaît hors de l'écran (en haut ou en bas de la page) juste après un appui,
+  // il est aussi montré dans une bulle en bas de l'écran. MouToast(texte, 'ok' | 'err' | 'warn') pour en afficher une soi-même.
+  var ZONES = '.note, .mou-note, .message, .lib-status';
+  var dernierGeste = 0, recents = {}, pile = null;
+  ['click', 'keydown', 'change', 'submit', 'touchend'].forEach(function (t) {
+    document.addEventListener(t, function () { dernierGeste = Date.now(); }, true);
+  });
+  function toast(texte, genre) {
+    texte = String(texte || '').trim();
+    if (!texte || Date.now() - (recents[texte] || 0) < 2500) return;
+    recents[texte] = Date.now();
+    if (!pile) { pile = document.createElement('div'); pile.className = 'mou-toasts'; pile.setAttribute('aria-live', 'polite'); document.body.appendChild(pile); }
+    var b = document.createElement('div');
+    b.className = 'mou-toast ' + (genre || 'ok'); b.setAttribute('role', 'status');
+    b.textContent = texte.length > 280 ? texte.slice(0, 277) + '…' : texte;
+    var fermer = function () { b.classList.add('fin'); setTimeout(function () { b.remove(); }, 250); };
+    b.addEventListener('click', fermer);
+    pile.appendChild(b);
+    while (pile.children.length > 3) pile.firstChild.remove();
+    setTimeout(fermer, genre === 'ok' ? 4500 : 8000);
+  }
+  window.MouToast = toast;
+  function genreDe(el) {
+    var c = ' ' + el.className + ' ' + (el.firstElementChild ? el.firstElementChild.className : '') + ' ';
+    return / (err|error|danger) /.test(c) ? 'err' : / warn /.test(c) ? 'warn' : 'ok';
+  }
+  function horsEcran(el) {
+    var r = el.getBoundingClientRect();
+    if (!r.width && !r.height) return false;                        // caché : rien à signaler
+    return r.top < 0 || r.bottom > (window.innerHeight || document.documentElement.clientHeight);
+  }
+  var aVerifier = new Set(), minuterie = null;
+  function verifier() {
+    minuterie = null;
+    if (Date.now() - dernierGeste > 15000) { aVerifier.clear(); return; }   // seulement en réponse à une action
+    aVerifier.forEach(function (el) {
+      var texte = (el.innerText || el.textContent || '').trim();
+      if (!texte || !document.body.contains(el) || !horsEcran(el)) return;
+      if (el._mouGeste === dernierGeste && genreDe(el) !== 'err') return;   // une bulle par zone et par appui
+      el._mouGeste = dernierGeste;
+      toast(texte, genreDe(el));
+    });
+    aVerifier.clear();
+  }
+  function surveiller() {
+    new MutationObserver(function (mutations) {
+      mutations.forEach(function (m) {
+        var cible = m.target.nodeType === 1 ? m.target : m.target.parentElement;
+        var zone = cible && cible.closest && cible.closest(ZONES);
+        if (zone) aVerifier.add(zone);
+        m.addedNodes && m.addedNodes.forEach(function (n) {
+          if (n.nodeType !== 1) return;
+          if (n.matches(ZONES)) aVerifier.add(n);
+          n.querySelectorAll && n.querySelectorAll(ZONES).forEach(function (z) { aVerifier.add(z); });
+        });
+      });
+      if (aVerifier.size && !minuterie) minuterie = setTimeout(verifier, 60);
+    }).observe(document.body, {subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class']});
+  }
+
+  function init() { var host = $('mou-header'); if (host) build(host); surveiller(); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
