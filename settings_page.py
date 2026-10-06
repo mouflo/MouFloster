@@ -67,3 +67,41 @@ def init_app(app, base_dir, version_fn, get_dirs):
         logger.info("Dossiers mis à jour depuis la page web : médiathèque %s · posters %s", library, output)
         threading.Thread(target=lambda: (time.sleep(1.5), os._exit(0)), daemon=True).start()   # systemd relance l'appli
         return jsonify({"ok": True, "message": "Enregistré. L'appli redémarre pour relire les dossiers…"})
+
+    # ------------------------------------------------------------------
+    # MouFlanga : adresse + clé API (générée dans MouFlanga → ⚙️ Réglages)
+    # ------------------------------------------------------------------
+    import mouflanga_link
+
+    @app.route("/api/settings/mouflanga")
+    def mouflanga_state():
+        cle = os.getenv("MOUFLANGA_CLE", "").strip()
+        return jsonify({"url": os.getenv("MOUFLANGA_URL", "").strip(), "configured": bool(cle),
+                        "hint": ("…" + cle[-4:]) if len(cle) >= 8 else "", "mode": mouflanga_link.mode(),
+                        "local": mouflanga_link.installe()})
+
+    @app.route("/api/settings/mouflanga", methods=["POST"])
+    def mouflanga_save():
+        body = request.get_json(silent=True) or {}
+        url = str(body.get("url", "")).strip().rstrip("/")
+        cle = str(body.get("api_key", "")).strip() or os.getenv("MOUFLANGA_CLE", "").strip()
+        if body.get("effacer"):
+            for nom in ("MOUFLANGA_URL", "MOUFLANGA_CLE"):
+                _write_secret(secrets, nom, "")
+                os.environ[nom] = ""
+            return jsonify({"ok": True, "message": "Connexion à MouFlanga effacée."})
+        if not _URL_RE.match(url) or _BAD_CHARS & set(url):
+            return jsonify({"ok": False, "error": "Adresse invalide : elle doit ressembler à http://192.168.1.141:5002"}), 400
+        if not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", cle):
+            return jsonify({"ok": False, "error": "Colle la clé API générée dans MouFlanga → ⚙️ Réglages (sans espace)."}), 400
+        try:
+            msg = mouflanga_link.tester(url, cle)
+        except mouflanga_link.ErreurMouflanga as e:
+            return jsonify({"ok": False, "error": str(e) + ("" if body.get("test") else " Rien n'a été enregistré.")}), 400
+        if body.get("test"):
+            return jsonify({"ok": True, "message": msg})
+        _write_secret(secrets, "MOUFLANGA_URL", url)
+        _write_secret(secrets, "MOUFLANGA_CLE", cle)
+        os.environ["MOUFLANGA_URL"], os.environ["MOUFLANGA_CLE"] = url, cle
+        logger.info("Connexion à MouFlanga enregistrée : %s", url)
+        return jsonify({"ok": True, "message": "Enregistré. " + msg})

@@ -997,23 +997,31 @@ def api_library_apply():
 def api_mouflanga_series():
     """Séries de MouFlanga, avec celle qui ressemble le plus au titre du poster."""
     data = request.get_json(silent=True) or {}
-    if not mouflanga_link.installe():
-        return jsonify({"error": "MouFlanga n'est pas installé sur ce serveur."}), 404
-    racine = mouflanga_link.manga_dir()
-    if not racine.is_dir():
-        return jsonify({"error": f"Dossier des mangas introuvable : {racine} (le partage est-il monté ?)"}), 500
-    liste = mouflanga_link.series()
+    if not mouflanga_link.mode():
+        return jsonify({"error": "MouFlanga n'est pas relié : règle son adresse et sa clé API dans ⚙️ Réglages → MouFlanga."}), 404
+    if mouflanga_link.mode() == "local" and not mouflanga_link.manga_dir().is_dir():
+        return jsonify({"error": f"Dossier des mangas introuvable : {mouflanga_link.manga_dir()} (le partage est-il monté ?)"}), 500
+    try:
+        liste = mouflanga_link.series()
+    except mouflanga_link.ErreurMouflanga as e:
+        return jsonify({"error": str(e)}), 502
+    noms = [x["name"] for x in liste]
+    cible = data.get("cible")          # série demandée par MouFlanga (bouton « Créer avec MouFloster »)
     titres = [t for t in (data.get("title"), data.get("original_title")) if t]
-    return jsonify({"series": liste, "selected": mouflanga_link.meilleure([x["name"] for x in liste], titres)})
+    choisie = cible if cible in noms else mouflanga_link.meilleure(noms, titres)
+    return jsonify({"series": liste, "selected": choisie})
 
 
 @app.route("/api/mouflanga/cover")
 def api_mouflanga_cover():
     """Couverture actuelle d'une série MouFlanga (aperçu avant remplacement)."""
-    dossier = mouflanga_link.dossier_serie(request.args.get("name", ""))
-    if dossier is None or not (dossier / mouflanga_link.COUVERTURE).is_file():
+    try:
+        image = mouflanga_link.couverture(request.args.get("name", ""))
+    except mouflanga_link.ErreurMouflanga as e:
+        return jsonify({"error": str(e)}), 502
+    if image is None:
         return jsonify({"error": "Pas de couverture choisie"}), 404
-    resp = send_file(dossier / mouflanga_link.COUVERTURE, mimetype="image/jpeg")
+    resp = send_file(BytesIO(image), mimetype="image/jpeg")
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
@@ -1024,7 +1032,7 @@ def api_mouflanga_apply():
     saved = os.path.basename(data.get("saved_filename") or "")
     try:
         result = mouflanga_link.appliquer(os.path.join(OUTPUT_BASE, saved), data.get("name", ""), BACKUP_ROOT)
-    except ValueError as e:
+    except (ValueError, mouflanga_link.ErreurMouflanga) as e:
         return jsonify({"error": str(e)}), 400
     except OSError as e:
         logger.error(f"Erreur copie MouFlanga: {e}")
@@ -1753,6 +1761,8 @@ HTML_TEMPLATE = """
         }
         .lib-compare img { max-width: 100%; max-height: 100%; box-shadow: 0 2px 10px rgba(0,0,0,.6); }
         .lib-compare .empty { color: #aab; font-size: 0.85em; padding: 10px; }
+        .mfg-retour { display: inline-block; margin-top: 8px; padding: 6px 12px; border-radius: 6px; background: #52b54b; color: #fff; text-decoration: none; font-weight: 600; }
+        .mfg-retour[hidden], #mfgBandeau[hidden] { display: none; }
         .lib-compare figcaption { font-size: 0.8em; color: #555; margin-top: 6px; line-height: 1.35; }
         .lib-compare figcaption b { color: #222; }
         .lib-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
@@ -1861,6 +1871,11 @@ HTML_TEMPLATE = """
         <div class="content">
             <!-- GAUCHE: Controls -->
             <div class="panel">
+                <!-- Venue depuis MouFlanga -->
+                <div class="lib-status ok" id="mfgBandeau" hidden style="margin-bottom:12px">
+                    <span id="mfgBandeauTexte"></span><br>
+                    <a id="mfgRetour" class="mfg-retour" hidden></a>
+                </div>
                 <!-- Recherche -->
                 <div class="section">
                     <h3>🔍 Recherche</h3>
@@ -2828,6 +2843,27 @@ HTML_TEMPLATE = """
 
         // ===== MouFlanga : le poster devient la couverture d'une série de mangas =====
         let mfgState = {saved: null, series: []};
+        // Ouverture depuis MouFlanga (« Créer avec MouFloster ») : ?mouflanga=<série>&q=<recherche>&retour=<adresse>
+        const mfgVenue = (() => {
+            const p = new URLSearchParams(location.search), retour = p.get('retour') || '';
+            return {serie: p.get('mouflanga') || '', q: p.get('q') || '', retour: /^https?:\/\//i.test(retour) ? retour : ''};
+        })();
+        function mfgBandeau(fini) {
+            const b = document.getElementById('mfgBandeau');
+            if (!mfgVenue.serie) { b.hidden = true; return; }
+            b.hidden = false;
+            document.getElementById('mfgBandeauTexte').textContent = fini
+                ? '✅ Couverture de « ' + mfgVenue.serie + ' » envoyée dans MouFlanga.'
+                : '📚 Couverture pour « ' + mfgVenue.serie + ' » (MouFlanga) : choisis une affiche, personnalise-la, puis « 📚 Couverture dans MouFlanga ».';
+            const a = document.getElementById('mfgRetour');
+            a.hidden = !mfgVenue.retour; a.href = mfgVenue.retour;
+            a.textContent = fini ? '↩ Retour à MouFlanga' : '↩ Annuler et revenir';
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            if (!mfgVenue.serie) return;
+            mfgBandeau(false);
+            if (mfgVenue.q) { document.getElementById('searchQuery').value = mfgVenue.q; search(); }
+        });
         function mfgStatus(msg, kind) { const el = document.getElementById('mfgStatus'); el.textContent = msg; el.className = 'lib-status' + (kind ? ' ' + kind : ''); }
         async function sendToMouflanga() {
             const data = await saveToServer();
@@ -2842,7 +2878,7 @@ HTML_TEMPLATE = """
             mfgStatus('Lecture de la bibliothèque MouFlanga...');
             try {
                 const res = await fetch('/api/mouflanga/series', {method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({title: selectedItem.title, original_title: selectedItem.original_title || ''})});
+                    body: JSON.stringify({title: selectedItem.title, original_title: selectedItem.original_title || '', cible: mfgVenue.serie})});
                 const r = await res.json();
                 if (!res.ok || r.error) throw new Error(r.error || 'Erreur ' + res.status);
                 if (!r.series.length) { mfgStatus('Aucune série dans MouFlanga pour le moment.', 'err'); return; }
@@ -2873,6 +2909,7 @@ HTML_TEMPLATE = """
                 if (!res.ok || r.error) throw new Error(r.error || 'Erreur ' + res.status);
                 closeMouflanga();
                 showMessage('📚 Couverture de « ' + nom + ' » changée dans MouFlanga' + (r.backup ? ' (ancienne sauvegardée)' : ''), 'success');
+                if (mfgVenue.retour) mfgBandeau(true);
             } catch (err) { mfgStatus('❌ ' + err.message, 'err'); btn.disabled = false; }
         }
         function closeMouflanga() {
