@@ -79,6 +79,15 @@ def split_folder_name(name: str):
 # Lecture de la médiathèque
 # ---------------------------------------------------------------------------
 
+def _vide(chemin):
+    """Dossier sans rien dedans (reste d'un renommage par Radarr/Sonarr) : jamais proposé pour un poster."""
+    try:
+        with os.scandir(chemin) as it:
+            return next(it, None) is None
+    except OSError:
+        return False
+
+
 def list_family(family: str):
     now = time.time()
     cached = _list_cache.get(family)
@@ -88,7 +97,7 @@ def list_family(family: str):
     names = []
     try:
         for entry in os.scandir(path):
-            if entry.is_dir() and not _is_ignored(entry.name):
+            if entry.is_dir() and not _is_ignored(entry.name) and not _vide(entry.path):
                 names.append(entry.name)
     except OSError:
         names = []
