@@ -99,7 +99,7 @@ def alerter(nom, texte):
 
 def lire_lien(lien):
     m = _LIEN.search(lien or "")
-    return ("-100" + m.group(1), m.group(2) if m.group(3) else "") if m else None
+    return ("-100" + m.group(1), m.group(2)) if m else None        # le 2e nombre est toujours le sujet
 
 
 # ---------------------------------------------------------------- Événements
