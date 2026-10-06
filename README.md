@@ -63,6 +63,7 @@ reconstruction complète après une migration/panne, voir [`INSTALL.md`](INSTALL
 - 📖 **Couverture dans MouFlanga** : « 📚 Couverture dans MouFlanga » met le poster en couverture d'une série de la bibliothèque de mangas MouFlanga (sans Emby) ; la série est reconnue d'après le titre, l'ancienne couverture est sauvegardée dans `_anciens-posters/MouFlanga`. Depuis MouFlanga, « 🎨 Créer avec MouFloster » ouvre MouFloster avec la recherche faite et un bouton pour revenir
 - ✏️ **Image perso sans recherche** : pour un manga sans anime (pas d'affiche TheMovieDB), tape juste le nom puis « ⬆️ Envoyer mon image »
 - 📨 **Alertes Telegram** : redémarrage après un plantage ou une coupure du serveur, erreur pendant une action, lot de posters terminé, mise à jour installée (cases à cocher dans ⚙️ Réglages ; réglages Telegram repris de MouFlanimeXer, sujet de groupe propre à MouFloster)
+- 🎵 **Générique manquant** : après l'envoi d'un poster, si le film ou la série n'a pas encore de générique, une fenêtre propose d'ouvrir MouFlopening directement sur ce titre (adresses dans ⚙️ Réglages → MouFlopening)
 - ⚙️ **Page Réglages** : adresse et clé d'Emby, clé TheMovieDB et dossiers se règlent depuis le navigateur (même page que dans MouFlopening et MouFlanimeXer)
 
 ## 📋 Prérequis

@@ -105,3 +105,21 @@ def init_app(app, base_dir, version_fn, get_dirs):
         os.environ["MOUFLANGA_URL"], os.environ["MOUFLANGA_CLE"] = url, cle
         logger.info("Connexion à MouFlanga enregistrée : %s", url)
         return jsonify({"ok": True, "message": "Enregistré. " + msg})
+
+    # ------------------------------------------------------------------
+    # MouFlopening (génériques) : adresse locale et adresse perso
+    # ------------------------------------------------------------------
+    @app.route("/api/settings/mouflopening", methods=["GET", "POST"])
+    def mouflopening_adresses():
+        if request.method == "POST":
+            body = request.get_json(silent=True) or {}
+            adresses = {"MOUFLOPENING_URL": str(body.get("url", "")).strip().rstrip("/"),
+                        "MOUFLOPENING_URL_EXTERNE": str(body.get("url_externe", "")).strip().rstrip("/")}
+            for url in adresses.values():
+                if url and (not _URL_RE.match(url) or _BAD_CHARS & set(url)):
+                    return jsonify({"ok": False, "error": f"Adresse invalide : « {url} » (elle commence par http:// ou https://)"}), 400
+            for nom, url in adresses.items():
+                _write_secret(secrets, nom, url)
+                os.environ[nom] = url
+            return jsonify({"ok": True, "message": "Adresses enregistrées." if any(adresses.values()) else "Adresses effacées : la proposition est désactivée."})
+        return jsonify({"url": os.getenv("MOUFLOPENING_URL", "").strip(), "url_externe": os.getenv("MOUFLOPENING_URL_EXTERNE", "").strip()})

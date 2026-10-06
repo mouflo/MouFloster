@@ -981,6 +981,9 @@ def api_library_apply():
 
     library.remember(media_type, _to_int(data.get("tmdb_id")), rel)
     logger.info(f"📁 Médiathèque: {result['written']} (action={action}, sauvegarde={result['backup']})")
+    dossier_titre = library.resolve_dir(rel, "")                 # dossier du film / de la série (pas la saison)
+    result["generique"] = _a_un_generique(dossier_titre) if dossier_titre else None
+    result["dossier"] = str(dossier_titre) if dossier_titre else ""
 
     emby_result = None
     # "Garder les deux" ne change pas le poster officiel: rien à actualiser
@@ -992,6 +995,22 @@ def api_library_apply():
                                        data.get("episode_text") if tgt["episode"] else None)
         logger.info(f"🔄 Emby: {emby_result}")
     return jsonify({"success": True, **result, "emby": emby_result})
+
+
+# ---------- MouFlopening : le titre a-t-il un générique ? (même règle que MouFlopening et Emby) ----------
+_GENERIQUE_EXTS = (".mp3", ".flac", ".ogg", ".m4a", ".aac", ".wav", ".opus", ".wma")
+
+
+def _a_un_generique(dossier):
+    """theme.<audio> d'au moins 8 Ko dans le dossier, ou un fichier audio dans « theme-music »."""
+    try:
+        d = Path(dossier)
+        if any((d / f"theme{e}").is_file() and (d / f"theme{e}").stat().st_size >= 8192 for e in _GENERIQUE_EXTS):
+            return True
+        tm = d / "theme-music"
+        return tm.is_dir() and any(f.suffix.lower() in _GENERIQUE_EXTS and f.stat().st_size >= 8192 for f in tm.iterdir())
+    except OSError:
+        return None
 
 
 # ---------- MouFlanga : le poster devient la couverture d'une série de mangas ----------
@@ -2050,6 +2069,17 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
+    <!-- Fenêtre: pas encore de générique (MouFlopening) -->
+    <div class="modal-overlay" id="genModal">
+        <div class="modal" style="max-width:420px">
+            <div class="modal-head"><div><h3>🎵 Pas encore de générique</h3><div class="modal-sub" id="genTexte"></div></div></div>
+            <div class="lib-actions">
+                <a id="genOuvrir" class="mfg-retour">🎵 Ouvrir MouFlopening</a>
+                <button class="secondary" onclick="document.getElementById('genModal').classList.remove('show')">Plus tard</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Fenêtre: couverture envoyée dans MouFlanga -->
     <div class="modal-overlay" id="mfgFiniModal">
         <div class="modal" style="max-width:420px">
@@ -2968,6 +2998,18 @@ HTML_TEMPLATE = """
             document.getElementById('mfgFiniFermer').textContent = mfgVenue.retour ? 'Rester dans MouFloster' : 'OK';
             document.getElementById('mfgFiniModal').classList.add('show');
         }
+        // Pas encore de générique : proposer d'ouvrir MouFlopening directement sur ce titre
+        async function proposerGenerique(titre, dossier) {
+            let a = {};
+            try { a = await (await fetch('/api/settings/mouflopening')).json(); } catch (e) { return; }
+            const h = location.hostname;
+            const local = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h) || /\.(local|lan|home)$/.test(h);
+            const base = local ? (a.url || a.url_externe) : (a.url_externe || a.url);
+            if (!base) return;
+            document.getElementById('genTexte').textContent = '« ' + titre + ' » n’a pas encore de générique dans la médiathèque. MouFlopening peut le trouver : il s’ouvre directement sur ce titre et lance la recherche.';
+            document.getElementById('genOuvrir').href = base.replace(/\/$/, '') + '/?dossier=' + encodeURIComponent(dossier) + '&retour=' + encodeURIComponent(location.origin + location.pathname);
+            document.getElementById('genModal').classList.add('show');
+        }
         function closeMouflanga() {
             document.getElementById('mfgModal').classList.remove('show');
             document.body.style.overflow = '';
@@ -3298,6 +3340,7 @@ HTML_TEMPLATE = """
                     if (!data.emby.ok) kind = 'error';
                 }
                 showMessage(msg, kind);
+                if (data.generique === false) proposerGenerique(selectedItem.title, data.dossier);
             } catch (err) {
                 libSetStatus('❌ ' + err.message, 'err');
                 document.querySelectorAll('#libActions button').forEach(b => b.disabled = false);

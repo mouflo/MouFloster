@@ -63,6 +63,15 @@
     </div>
 
     <div class="panel">
+        <h2>🎵 MouFlopening (génériques)</h2>
+        <div class="sub">Après l'envoi d'un poster vers la médiathèque, si le film ou la série n'a pas encore de générique, MouFloster propose d'ouvrir MouFlopening directement sur ce titre. Mets les deux adresses : l'appli prend l'adresse locale quand tu es chez toi, l'adresse perso sinon. Vide = pas de proposition.</div>
+        <div class="field"><label for="mfoUrl">Adresse de MouFlopening sur le réseau local</label><input type="text" id="mfoUrl" placeholder="http://192.168.1.141:8001" autocapitalize="off" spellcheck="false"></div>
+        <div class="field"><label for="mfoUrlExt">Adresse perso de MouFlopening (depuis l'extérieur, facultatif)</label><input type="text" id="mfoUrlExt" placeholder="https://mouflopening.mondomaine.fr" autocapitalize="off" spellcheck="false"></div>
+        <div class="row"><button class="btn" id="mfoSave">Enregistrer les adresses</button></div>
+        <div id="mfoMsg"></div>
+    </div>
+
+    <div class="panel">
         <h2>📁 Dossiers</h2>
         <div class="sub">Où se trouve ta médiathèque et où ranger les posters créés. L'appli redémarre après l'enregistrement (quelques secondes).</div>
         <div class="field"><label for="pathLibrary">Dossier de la médiathèque</label>
@@ -128,6 +137,9 @@ $('tgDetect').addEventListener('click', async () => {
 $('tgSave').addEventListener('click', async () => { say('tgMsg', 'Envoi d\'un message de test…', true); const r = await post('/api/settings/telegram', tgCorps('save')); say('tgMsg', r.message || r.error, r.ok); if (r.ok) { $('tgToken').value = ''; loadTg(); } });
 $('tgTest').addEventListener('click', async () => { say('tgMsg', 'Envoi…', true); const r = await post('/api/settings/telegram', tgCorps('test')); say('tgMsg', r.message || r.error, r.ok); });
 loadTg();
+
+(async () => { const a = await api('/api/settings/mouflopening'); $('mfoUrl').value = a.url || ''; $('mfoUrlExt').value = a.url_externe || ''; })();
+simpleSave('mfoSave', 'mfoMsg', '/api/settings/mouflopening', () => ({url: $('mfoUrl').value, url_externe: $('mfoUrlExt').value}));
 </script>
 </body>
 </html>
