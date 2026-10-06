@@ -131,6 +131,9 @@ tmdb_settings.init_app(app, BASE_DIR, _set_tmdb_key)
 import settings_page
 settings_page.init_app(app, BASE_DIR, lambda: APP_VERSION, lambda: {"library": str(library.LIBRARY_ROOT), "output": OUTPUT_BASE})
 
+import notif     # alertes Telegram (redémarrage inattendu, erreurs, lot terminé, mise à jour)
+notif.init_app(app, BASE_DIR, APP_VERSION, Path(BASE_DIR) / "data" / "moufloster.log", emby_settings._write_secret)
+
 # ============================================================================
 # TMDB Functions
 # ============================================================================
@@ -2417,7 +2420,7 @@ HTML_TEMPLATE = """
             if (!todo.length) return showMessage('Rien à envoyer : ajoute des titres avec une affiche', 'error');
             if (!confirm('Envoyer ' + todo.length + ' poster(s) vers la médiathèque ? Les anciens posters seront sauvegardés.')) return;
             const btn = document.getElementById('batchSend'); btn.disabled = true;
-            let sent = 0, manual = 0;
+            let sent = 0, manual = 0, errs = 0;
             for (const b of todo) {
                 try {
                     b.status = '🎨 création du poster…'; batchRender();
@@ -2442,10 +2445,12 @@ HTML_TEMPLATE = """
                     if (r.error) throw new Error(r.error);
                     b.done = true; sent++;
                     b.status = '✅ ' + r.written + (r.backup ? ' (ancien sauvegardé)' : '') + (r.emby ? (r.emby.ok ? ' · 🔄 Emby' : ' · ⚠️ ' + r.emby.message) : '');
-                } catch (err) { b.status = '❌ ' + err.message; }
+                } catch (err) { b.status = '❌ ' + err.message; errs++; }
                 batchRender();
             }
             btn.disabled = false;
+            fetch('/api/notif/lot', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({envoyes: sent, manuels: manual, erreurs: errs})}).catch(() => {});
             showMessage('Lot terminé : ' + sent + ' envoyé(s)' + (manual ? ', ' + manual + ' à faire à la main' : ''), sent ? 'success' : 'error');
         }
 
@@ -3339,5 +3344,6 @@ if __name__ == "__main__":
 
     logger.info(f"📁 Output: {OUTPUT_BASE}")
     logger.info("🌐 Ouvre: http://localhost:8000")
+    notif.au_demarrage(BASE_DIR, APP_VERSION, Path(BASE_DIR) / "data" / "moufloster.log")   # seulement le vrai service
 
     app.run(debug=False, host="0.0.0.0", port=8000)

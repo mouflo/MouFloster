@@ -48,6 +48,21 @@
     </div>
 
     <div class="panel">
+        <h2>📨 Telegram</h2>
+        <div class="sub">MouFloster te prévient s'il a planté ou redémarré, si une action échoue, ou quand un lot de posters est fini. Si une autre appli MouFl utilise déjà Telegram, ses réglages sont repris : il n'y a rien à saisir.</div>
+        <div class="state" id="tgState"></div>
+        <div id="tgOptions"></div>
+        <details style="margin:8px 0"><summary style="cursor:pointer;color:var(--muted)">Régler un autre bot, un groupe ou un sujet</summary>
+        <div class="field" style="margin-top:10px"><label for="tgToken">Jeton du bot Telegram (donné par @BotFather)</label><input type="password" id="tgToken" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="123456789:ABC… (laisse vide pour garder l'actuel)"></div>
+        <div class="field"><label for="tgChat">Identifiant de ta discussion, ou celui du groupe (commence par -100)</label><input type="text" id="tgChat" autocomplete="off" placeholder="laisse vide pour garder l'actuel"></div>
+        <div class="field"><label for="tgLien">Envoyer dans un sujet de groupe : lien d'un message du sujet</label><div class="row nowrap"><input type="text" id="tgLien" autocapitalize="off" spellcheck="false" placeholder="https://t.me/c/1234567890/45/678"><button class="btn ghost" id="tgLienLire">Utiliser ce lien</button></div><div class="tabsinfo">Dans ton groupe Telegram, ouvre le sujet de MouFloster, fais un appui long sur un message → « Copier le lien », colle-le ici : le groupe et le numéro du sujet se remplissent. Le bot doit être membre du groupe.</div></div>
+        <div class="field"><label for="tgThread">Numéro du sujet (rempli par le lien ; vide = pas de sujet, messages en privé ou dans « Général »)</label><input type="text" id="tgThread" inputmode="numeric" autocomplete="off" placeholder="vide = pas de sujet"><div class="row" style="margin-top:6px"><button class="btn ghost" id="tgDetect">🔎 Détecter le groupe et le sujet</button></div><div class="tabsinfo">Détection automatique : écris « bonjour » dans le sujet puis appuie sur le bouton (impossible si le bot sert déjà à une autre application comme Jeedom : utilise alors le lien).</div></div>
+        </details>
+        <div class="row"><button class="btn" id="tgSave">Enregistrer</button><button class="btn ghost" id="tgTest">📨 Envoyer un message de test</button></div>
+        <div id="tgMsg"></div>
+    </div>
+
+    <div class="panel">
         <h2>📁 Dossiers</h2>
         <div class="sub">Où se trouve ta médiathèque et où ranger les posters créés. L'appli redémarre après l'enregistrement (quelques secondes).</div>
         <div class="field"><label for="pathLibrary">Dossier de la médiathèque</label>
@@ -87,6 +102,32 @@ $('mfgSave').addEventListener('click', async () => { say('mfgMsg', 'Vérificatio
 $('mfgEffacer').addEventListener('click', async () => { if (!confirm('Effacer la connexion à MouFlanga ?')) return; const r = await post('/api/settings/mouflanga', {effacer: true}); say('mfgMsg', r.message || r.error, r.ok); loadMouflanga(); });
 loadMouflanga();
 keyForm('emby', '/api/settings/emby'); keyForm('tmdb', '/api/settings/tmdb'); loadPaths();
+
+async function loadTg() {
+    const t = await api('/api/settings/telegram');
+    $('tgState').textContent = t.configured ? `Telegram : réglé (discussion ${t.chat_hint}${t.thread_id ? ', sujet ' + t.thread_id : ''}${t.origine === 'MouFlanimeXer' ? ', repris de MouFlanimeXer' : ''})` : 'Telegram : pas encore réglé';
+    $('tgThread').value = t.thread_id || '';
+    $('tgOptions').innerHTML = (t.options || []).map(o => `<label style="display:flex;gap:10px;align-items:flex-start;margin:8px 0;cursor:pointer"><input type="checkbox" data-opt="${esc(o.nom)}" ${o.actif ? 'checked' : ''} style="width:20px;height:20px;flex:none;margin-top:2px"><span>${esc(o.libelle)}</span></label>`).join('');
+    document.querySelectorAll('[data-opt]').forEach(c => c.addEventListener('change', async () => {
+        const r = await post('/api/settings/telegram', {action: 'options', options: {[c.dataset.opt]: c.checked}});
+        say('tgMsg', r.message || r.error, r.ok);
+    }));
+}
+const tgCorps = action => ({action, token: $('tgToken').value, chat_id: $('tgChat').value, thread_id: $('tgThread').value});
+$('tgLienLire').addEventListener('click', async () => {
+    const r = await post('/api/settings/telegram', {action: 'lien', lien: $('tgLien').value});
+    if (r.ok) { $('tgChat').value = r.chat_id; $('tgThread').value = r.thread_id; }
+    say('tgMsg', r.message || r.error, r.ok);
+});
+$('tgDetect').addEventListener('click', async () => {
+    say('tgMsg', 'Recherche de ton message dans le sujet…', true);
+    const r = await post('/api/settings/telegram', tgCorps('detect'));
+    if (r.ok) { $('tgChat').value = r.chat_id; $('tgThread').value = r.thread_id; }
+    say('tgMsg', r.message || r.error, r.ok);
+});
+$('tgSave').addEventListener('click', async () => { say('tgMsg', 'Envoi d\'un message de test…', true); const r = await post('/api/settings/telegram', tgCorps('save')); say('tgMsg', r.message || r.error, r.ok); if (r.ok) { $('tgToken').value = ''; loadTg(); } });
+$('tgTest').addEventListener('click', async () => { say('tgMsg', 'Envoi…', true); const r = await post('/api/settings/telegram', tgCorps('test')); say('tgMsg', r.message || r.error, r.ok); });
+loadTg();
 </script>
 </body>
 </html>
