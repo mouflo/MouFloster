@@ -2710,11 +2710,14 @@ HTML_TEMPLATE = """
             document.getElementById('eraseUse').addEventListener('click', eraseUse);
         })();
 
-        // Ligne 2 (titre principal) : remplie avec le nom choisi, seulement si elle est vide
+        // Ligne 2 (titre principal) : remplie avec le nom choisi si elle est vide ou si elle contient encore
+        // le nom mis automatiquement la fois d'avant (enchaînement de posters) ; jamais si tu l'as modifiée à la main
         function preremplirTitre(nom) {
             const champ = document.getElementById('text2'), case2 = document.getElementById('text2Enabled');
-            if (!nom || champ.value.trim()) return;
+            const auto = champ.value.trim() === '' || champ.value === (champ.dataset.auto || '');
+            if (!nom || !auto) return;
             champ.value = nom;
+            champ.dataset.auto = nom;
             if (!case2.checked) { case2.checked = true; case2.dispatchEvent(new Event('change')); }
         }
 
