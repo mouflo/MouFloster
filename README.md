@@ -61,6 +61,7 @@ reconstruction complète après une migration/panne, voir [`INSTALL.md`](INSTALL
 - 📦 **Lot de posters** : « ➕ Lot » sur plusieurs résultats, une affiche et deux lignes de titre par film/série, puis « Envoyer tout le lot » (seuls les dossiers trouvés avec certitude sont remplacés, anciens posters sauvegardés ; les autres restent à faire à la main)
 - 📚 **Sagas** : cherche aussi les sagas TheMovieDB (« Harry Potter - Saga »…) ; leur affiche est envoyée directement dans la collection Emby correspondante (l'ancienne affiche est sauvegardée dans `_anciens-posters/_sagas`)
 - 📖 **Couverture dans MouFlanga** : « 📚 Couverture dans MouFlanga » met le poster en couverture d'une série de la bibliothèque de mangas MouFlanga (sans Emby) ; la série est reconnue d'après le titre, l'ancienne couverture est sauvegardée dans `_anciens-posters/MouFlanga`. Depuis MouFlanga, « 🎨 Créer avec MouFloster » ouvre MouFloster avec la recherche faite et un bouton pour revenir
+- ✏️ **Image perso sans recherche** : pour un manga sans anime (pas d'affiche TheMovieDB), tape juste le nom puis « ⬆️ Envoyer mon image »
 - ⚙️ **Page Réglages** : adresse et clé d'Emby, clé TheMovieDB et dossiers se règlent depuis le navigateur (même page que dans MouFlopening et MouFlanimeXer)
 
 ## 📋 Prérequis

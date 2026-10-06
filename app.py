@@ -1761,6 +1761,7 @@ HTML_TEMPLATE = """
         }
         .lib-compare img { max-width: 100%; max-height: 100%; box-shadow: 0 2px 10px rgba(0,0,0,.6); }
         .lib-compare .empty { color: #aab; font-size: 0.85em; padding: 10px; }
+        .upload-astuce { font-size: 0.8em; color: #888; margin: 6px 0 4px; }
         .mfg-retour { display: inline-block; margin-top: 8px; padding: 6px 12px; border-radius: 6px; background: #52b54b; color: #fff; text-decoration: none; font-weight: 600; }
         .mfg-retour[hidden], #mfgBandeau[hidden] { display: none; }
         .lib-compare figcaption { font-size: 0.8em; color: #555; margin-top: 6px; line-height: 1.35; }
@@ -1880,7 +1881,7 @@ HTML_TEMPLATE = """
                 <div class="section">
                     <h3>🔍 Recherche</h3>
                     <div class="search-box">
-                        <input type="text" id="searchQuery" placeholder="Film/Série..." />
+                        <input type="text" id="searchQuery" placeholder="Film, série ou manga…" />
                         <button onclick="search()">Chercher</button>
                     </div>
                     <div class="loading" id="searchLoading">Recherche...</div>
@@ -1907,6 +1908,7 @@ HTML_TEMPLATE = """
                         <input type="file" id="uploadFile" accept="image/*" style="display:none" />
                         <button type="button" class="secondary" id="eraseOpen">🧽 Effacer un élément</button>
                     </div>
+                    <div class="upload-astuce">Pas d'affiche trouvée (manga sans anime…) ? Tape juste le nom dans la recherche, puis « ⬆️ Envoyer mon image ».</div>
                     <div id="layoutBar"></div>
                     <div class="loading" id="postersLoading">Chargement...</div>
                     <div id="posters" class="results"></div>
@@ -2453,7 +2455,7 @@ HTML_TEMPLATE = """
             generatePreview();
         }
         async function rememberLayout() {
-            if (!selectedItem || !selectedPoster) return;
+            if (!selectedItem || !selectedPoster || selectedItem.libre) return;
             try {
                 await fetch('/api/layout', {method: 'POST', headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({tmdb_id: selectedItem.id, media_type: selectedItem.media_type, layout: captureLayout()})});
@@ -2691,14 +2693,30 @@ HTML_TEMPLATE = """
             document.getElementById('eraseUse').addEventListener('click', eraseUse);
         })();
 
+        // Titre « libre » : pas de fiche TheMovieDB, juste un nom
+        function elementLibre() {
+            let nom = (mfgVenue.serie || document.getElementById('searchQuery').value || '').trim();
+            if (!nom) nom = (prompt('Nom du manga, du film ou de la série (pour nommer le poster) :') || '').trim();
+            if (!nom) return null;
+            const item = {id: null, title: nom, original_title: '', media_type: 'tv', year: '?', libre: true};
+            const res = document.getElementById('results');
+            res.innerHTML = '';
+            const div = document.createElement('div');
+            div.className = 'result-item active';
+            div.textContent = '✏️ ' + nom + ' · sans recherche (ton image)';
+            res.appendChild(div);
+            return item;
+        }
+
         // Envoi manuel d'une image
         document.getElementById('uploadFile').addEventListener('change', async (e) => {
             const file = e.target.files[0];
             e.target.value = '';
             if (!file) return;
             if (!selectedItem) {
-                showMessage("Cherche d'abord un film/série (pour nommer le fichier), puis envoie ton image.", 'error');
-                return;
+                // Sans recherche (manga sans anime, image perso) : le nom vient de MouFlanga, de la recherche tapée, ou on le demande
+                selectedItem = elementLibre();
+                if (!selectedItem) { showMessage("Indique le nom (dans la recherche) pour nommer le poster.", 'error'); return; }
             }
             document.getElementById('postersLoading').classList.add('show');
             try {
