@@ -16,7 +16,7 @@
     <div id="mou-header" data-app="moufloster" data-prefix="MouFl" data-rest="oster" data-version="{{ version }}" data-sub="Réglages"></div>
     <a class="back" href="/">← Retour aux posters</a>
 
-    <div class="panel">
+    <div class="panel" data-onglet="Connexions">
         <h2>🎬 Emby</h2>
         <div class="sub">L'adresse de ton serveur Emby et sa clé API (Emby → Tableau de bord → Clés API). Sert à actualiser seulement le film ou la série dont tu viens de changer le poster.</div>
         <div class="field"><label for="embyHost">Adresse</label><input type="text" id="embyHost" placeholder="http://192.168.1.134:8096" autocapitalize="off" spellcheck="false"></div>
@@ -28,7 +28,7 @@
         <div id="embyKeyMsg"></div>
     </div>
 
-    <div class="panel">
+    <div class="panel" data-onglet="Connexions">
         <h2>🎞️ TheMovieDB</h2>
         <div class="sub">Sert à chercher les affiches (clé « API » de 32 caractères, ou « jeton d'accès » qui commence par eyJ).</div>
         <div class="state" id="tmdbKeyState"></div>
@@ -37,7 +37,7 @@
         <div id="tmdbKeyMsg"></div>
     </div>
 
-    <div class="panel">
+    <div class="panel" data-onglet="Connexions">
         <h2>📚 MouFlanga (mangas)</h2>
         <div class="sub">Pour envoyer un poster comme couverture d'une série de ta bibliothèque de mangas MouFlanga. Dans MouFlanga → ⚙️ Réglages → MouFloster, appuie sur « Générer une clé API », puis colle ici la clé et l'adresse de MouFlanga.</div>
         <div class="state" id="mfgState"></div>
@@ -47,7 +47,7 @@
         <div id="mfgMsg"></div>
     </div>
 
-    <div class="panel">
+    <div class="panel" data-onglet="Connexions">
         <h2>📨 Telegram</h2>
         <div class="sub">MouFloster te prévient s'il a planté ou redémarré, si une action échoue, ou quand un lot de posters est fini. Si une autre appli MouFl utilise déjà Telegram, ses réglages sont repris : il n'y a rien à saisir.</div>
         <div class="state" id="tgState"></div>
@@ -62,7 +62,7 @@
         <div id="tgMsg"></div>
     </div>
 
-    <div class="panel">
+    <div class="panel" data-onglet="Connexions">
         <h2>🎵 MouFlopening (génériques)</h2>
         <div class="sub">Après l'envoi d'un poster vers la médiathèque, si le film ou la série n'a pas encore de générique, MouFloster propose d'ouvrir MouFlopening directement sur ce titre. Mets les deux adresses : l'appli prend l'adresse locale quand tu es chez toi, l'adresse perso sinon. Vide = pas de proposition.</div>
         <div class="field"><label for="mfoUrl">Adresse de MouFlopening sur le réseau local</label><input type="text" id="mfoUrl" placeholder="http://192.168.1.141:8001" autocapitalize="off" spellcheck="false"></div>
@@ -71,7 +71,7 @@
         <div id="mfoMsg"></div>
     </div>
 
-    <div class="panel">
+    <div class="panel" data-onglet="Dossiers">
         <h2>📁 Dossiers</h2>
         <div class="sub">Où se trouve ta médiathèque et où ranger les posters créés. L'appli redémarre après l'enregistrement (quelques secondes).</div>
         <div class="field"><label for="pathLibrary">Dossier de la médiathèque</label>

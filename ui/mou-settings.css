@@ -39,3 +39,13 @@
     .tabsinfo b { color:var(--text); }
     .back { display:inline-block; margin-bottom:12px; color:var(--muted); text-decoration:none; }
     @media (max-width:800px) { .row.nowrap .btn { flex:0 0 auto; padding:12px 14px; } .row.nowrap input { flex:1 1 0; } body { padding:10px; } .field input, .field select { font-size:16px; } .row .btn { flex:1 1 100%; padding:12px; } }
+
+/* Onglets de la page Réglages (mou-settings.js) */
+.panel[hidden] { display:none !important; }
+.mou-onglets { position:sticky; top:0; z-index:5; display:flex; gap:6px; overflow-x:auto; padding:8px 0; margin:0 0 12px; background:var(--bg, #121315); scrollbar-width:none; }
+.mou-onglets::-webkit-scrollbar { display:none; }
+body.mou-skin .mou-onglets button { flex:0 0 auto; width:auto; margin:0; padding:7px 12px; border-radius:16px; border:1px solid var(--line, #333);
+  background:var(--field, #2a2a2a); color:var(--text, #eee); font-size:.85rem; font-weight:500; white-space:nowrap; }
+body.mou-skin .mou-onglets button.actif { background:rgba(82,181,75,.18); border-color:var(--accent, #52b54b); color:#fff; font-weight:600; }
+body.mou-skin .mou-onglets button { flex:1 1 auto; }
+@media (max-width:440px) { .mou-onglets .ic { display:none; } body.mou-skin .mou-onglets button { padding:7px 8px; } }

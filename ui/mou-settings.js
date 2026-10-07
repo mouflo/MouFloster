@@ -56,3 +56,28 @@ document.addEventListener('click', e => {
     const b = e.target.closest('[data-browse]'); if (!b) return;
     const input = $(b.dataset.browse); browseFolder(input && input.value || '/mnt', path => { if (input) input.value = path; });
 });
+
+// Onglets : chaque <div class="panel" data-onglet="Général|Dossiers|Connexions|Comptes"> est rangé dans son onglet.
+// L'onglet choisi est retenu sur l'appareil ; une adresse …/reglages#connexions ouvre directement le bon onglet.
+document.addEventListener('DOMContentLoaded', () => {
+    const panneaux = [...document.querySelectorAll('.panel[data-onglet]')];
+    const ORDRE = ['Général', 'Dossiers', 'Connexions', 'Comptes'], ICONES = {'Général': '⚙️', 'Dossiers': '📁', 'Connexions': '🔌', 'Comptes': '👥'};
+    const noms = [...new Set(panneaux.map(p => p.dataset.onglet))].sort((a, b) => (ORDRE.indexOf(a) + 1 || 99) - (ORDRE.indexOf(b) + 1 || 99));
+    if (noms.length < 2) return;
+    const simple = n => n.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const barre = document.createElement('nav');
+    barre.className = 'mou-onglets';
+    barre.innerHTML = noms.map(n => `<button type="button" data-onglet="${esc(n)}"><span class="ic">${ICONES[n] || ''} </span>${esc(n)}</button>`).join('');
+    panneaux[0].parentNode.insertBefore(barre, panneaux[0]);
+    const cle = 'mouOnglet' + location.pathname;
+    const montrer = n => {
+        panneaux.forEach(p => { p.hidden = p.dataset.onglet !== n; });
+        barre.querySelectorAll('button').forEach(b => b.classList.toggle('actif', b.dataset.onglet === n));
+        try { localStorage.setItem(cle, n); } catch (e) {}
+        history.replaceState(null, '', '#' + simple(n));
+    };
+    barre.addEventListener('click', e => { const b = e.target.closest('[data-onglet]'); if (b) { montrer(b.dataset.onglet); window.scrollTo(0, 0); } });
+    let depart = noms.find(n => '#' + simple(n) === location.hash);
+    if (!depart) { try { depart = localStorage.getItem(cle); } catch (e) {} }
+    montrer(noms.includes(depart) ? depart : noms[0]);
+});
