@@ -94,7 +94,12 @@ body.mou-login { display:flex; align-items:center; justify-content:center; paddi
     .mou-header .mou-sub { margin-left:52px; }
     .mou-header { display:flex; flex-direction:column; }
     .mou-actions { position:static; order:3; margin-top:14px; flex-wrap:wrap; }
-    .mou-actions .mou-ver { order:9; margin:0 0 0 auto; align-self:center; }
+    .mou-actions .mou-ver { order:9; flex-basis:100%; margin:2px 0 0; text-align:center; }
+    /* Boutons du haut : une seule rangée, même largeur, texte centré */
+    .mou-actions > a, .mou-actions > button, .mou-actions > form { flex:1 1 0; min-width:0; }
+    .mou-actions { align-items:stretch; }
+    .mou-actions > form { display:flex; }
+    .mou-actions .mou-btn, body.mou-skin .mou-actions form button { display:flex; align-items:center; justify-content:center; width:100%; text-align:center; padding:8px 4px; font-size:.85rem; line-height:1.25; white-space:normal; box-sizing:border-box; }
     .mou-modal { padding:0; align-items:stretch; }
     .mou-box { max-width:none; max-height:none; height:100%; border-radius:0; }
     .mou-box.narrow { height:auto; margin-top:auto; border-radius:12px 12px 0 0; }
