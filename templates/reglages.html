@@ -10,6 +10,10 @@
 <script src="/ui/mou-ui.js?v={{ version|urlencode }}" defer></script>
 <link rel="stylesheet" href="/ui/mou-settings.css?v={{ version|urlencode }}">
 <script src="/ui/mou-settings.js?v={{ version|urlencode }}"></script>
+<style>
+.usr-liste { margin:6px 0 10px; } .usr { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px; padding:8px 0; border-bottom:1px solid var(--line, #333); }
+.usr.off { opacity:.6; } .usr-nom { font-weight:600; display:flex; flex-direction:column; } .usr-nom small { font-weight:400; color:var(--muted, #999); font-size:.78rem; } .usr-act { display:flex; gap:6px; }
+</style>
 </head>
 <body>
 <div class="container">
@@ -82,6 +86,16 @@
         <div class="row" style="margin-top:12px"><button class="btn" id="pathsSave">Enregistrer et redémarrer</button></div>
         <div id="pathsMsg"></div>
     </div>
+
+    <div class="panel" data-onglet="Comptes">
+        <h2>👥 Copains</h2>
+        <div class="sub">Des comptes pour tes copains : ils créent des posters, et les envoient dans LEUR Emby (adresse externe et clé qu’ils saisissent eux-mêmes) ou les téléchargent. Ils voient aussi tes posters déjà faits, sans pouvoir rien modifier chez toi. Leurs créations sont gardées 30 jours.</div>
+        <div id="usrListe" class="usr-liste"></div>
+        <div class="field"><label for="usrId">Identifiant du copain</label><input type="text" id="usrId" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ex. max"></div>
+        <div class="field"><label for="usrMdp">Mot de passe (8 caractères minimum)</label><input type="text" id="usrMdp" autocomplete="new-password" autocapitalize="off" spellcheck="false"></div>
+        <div class="row"><button class="btn" id="usrAjouter">➕ Créer le compte</button></div>
+        <div id="usrMsg"></div>
+    </div>
 </div>
 <script>
 async function loadPaths() {
@@ -140,6 +154,28 @@ loadTg();
 
 (async () => { const a = await api('/api/settings/mouflopening'); $('mfoUrl').value = a.url || ''; $('mfoUrlExt').value = a.url_externe || ''; })();
 simpleSave('mfoSave', 'mfoMsg', '/api/settings/mouflopening', () => ({url: $('mfoUrl').value, url_externe: $('mfoUrlExt').value}));
+
+// ---------- 👥 Copains ----------
+async function loadUsr() {
+    const r = await api('/api/utilisateurs'), l = r.utilisateurs || [];
+    $('usrListe').innerHTML = l.length ? l.map(u => `<div class="usr${u.actif ? '' : ' off'}"><div class="usr-nom">👤 ${esc(u.id)}${u.actif ? '' : ' <small>(désactivé)</small>'}<small>${u.emby ? 'Emby relié' : 'sans Emby (téléchargement seulement)'}</small></div>
+        <div class="usr-act"><button class="btn ghost small" data-u="${esc(u.id)}" data-a="motdepasse">🔑</button>
+        <button class="btn ghost small" data-u="${esc(u.id)}" data-a="activer" data-v="${u.actif ? '' : '1'}">${u.actif ? '⏸' : '▶'}</button>
+        <button class="btn ghost small" data-u="${esc(u.id)}" data-a="supprimer">🗑</button></div></div>`).join('') : '<div class="state">Aucun compte copain.</div>';
+}
+$('usrAjouter').addEventListener('click', async () => {
+    const r = await post('/api/utilisateurs', {action: 'ajouter', id: $('usrId').value, mdp: $('usrMdp').value});
+    say('usrMsg', r.message || r.error, r.ok); if (r.ok) { $('usrId').value = ''; $('usrMdp').value = ''; loadUsr(); }
+});
+$('usrListe').addEventListener('click', async e => {
+    const b = e.target.closest('[data-a]'); if (!b) return;
+    const u = b.dataset.u, a = b.dataset.a, corps = {action: a, id: u};
+    if (a === 'motdepasse') { const m = prompt('Nouveau mot de passe pour « ' + u + ' » (8 caractères minimum) :'); if (!m) return; corps.mdp = m; }
+    if (a === 'supprimer' && !confirm('Supprimer le compte « ' + u + ' » ?')) return;
+    if (a === 'activer') corps.actif = !!b.dataset.v;
+    const r = await post('/api/utilisateurs', corps); say('usrMsg', r.message || r.error, r.ok); loadUsr();
+});
+loadUsr();
 </script>
 </body>
 </html>

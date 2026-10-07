@@ -45,6 +45,9 @@ reconstruction complète après une migration/panne, voir [`INSTALL.md`](INSTALL
 
 ![Sur téléphone](docs/screenshots/mobile.png)
 
+## 👥 Comptes copains (1.0)
+Tes copains qui ont leur propre Emby peuvent utiliser le créateur de posters : ⚙️ Réglages → Comptes → crée-leur un compte. Ils saisissent l'adresse **externe** et une clé API de leur Emby (« 🔌 Mon Emby ») et le bouton « 📤 Envoyer dans mon Emby » dépose le poster chez eux (retrouvé par l'identifiant TheMovieDB) ; sans Emby, ils téléchargent. Ils voient aussi tes posters déjà faits, en lecture seule. Les adresses de ton réseau local et de tes domaines leur sont refusées ; leurs créations sont effacées au bout de 30 jours.
+
 ## ✨ Fonctionnalités
 
 - 🔍 **Recherche TheMovieDB** : Cherche films/séries, affiche les résultats

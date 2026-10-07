@@ -23,11 +23,31 @@ class EmbyError(Exception):
     pass
 
 
+import threading as _threading
+_autre = _threading.local()      # Emby d'un copain le temps d'un envoi (voir serveur())
+
+
+class serveur:
+    """« with emby.serveur(adresse, clé): … » : les appels vont vers cet Emby-là (celui d'un copain), pas celui de l'admin."""
+    def __init__(self, url, cle):
+        self.v = (url.rstrip("/"), cle)
+
+    def __enter__(self):
+        _autre.v = self.v
+
+    def __exit__(self, *a):
+        _autre.v = None
+
+
 def base_url():
+    if getattr(_autre, "v", None):
+        return _autre.v[0]
     return os.getenv("EMBY_URL", DEFAULT_URL).strip().rstrip("/")
 
 
 def api_key():
+    if getattr(_autre, "v", None):
+        return _autre.v[1]
     return os.getenv("EMBY_API_KEY", "").strip()
 
 

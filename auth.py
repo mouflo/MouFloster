@@ -24,6 +24,9 @@ from werkzeug.security import check_password_hash, generate_password_hash
 BASE_DIR = Path(__file__).parent
 SECRETS_FILE = BASE_DIR / "data" / "secrets.env"
 KEY_FILE = BASE_DIR / "data" / "session_key"
+USERS_FILE = BASE_DIR / "data" / "utilisateurs.json"     # comptes « copain » (l'admin reste dans secrets.env)
+COPAIN_OK = set()       # (méthode, chemin) permis à un copain ; préfixes dans COPAIN_PREFIXES (rempli par app.py)
+COPAIN_PREFIXES = ()
 
 REMEMBER_DAYS = 30
 MAX_FAILS_IP = 5          # essais ratés par adresse avant blocage
@@ -54,6 +57,45 @@ def configured():
 def _fingerprint():
     """Change quand le mot de passe change: toutes les anciennes sessions deviennent invalides"""
     return hashlib.sha256(_hash().encode()).hexdigest()[:16]
+
+
+def _fp(h):
+    return hashlib.sha256((h or "").encode()).hexdigest()[:16]
+
+
+def lire_utilisateurs():
+    import json
+    try:
+        d = json.loads(USERS_FILE.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def ecrire_utilisateurs(d):
+    import json
+    USERS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = USERS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, USERS_FILE)
+
+
+def role():
+    """« admin », « copain » ou None. Un compte désactivé ou dont le mot de passe a changé est déconnecté."""
+    if not configured():
+        return None
+    u, f = session.get("u"), session.get("f", "")
+    if session.get("r", "admin") == "admin":
+        return "admin" if u == _user() and hmac.compare_digest(f, _fingerprint()) else None
+    d = lire_utilisateurs().get(u or "")
+    if d and d.get("actif", True) and hmac.compare_digest(f, _fp(d.get("hash"))):
+        return "copain"
+    return None
+
+
+def utilisateur():
+    return session.get("u") if role() else None
 
 
 def _secret_key():
@@ -196,7 +238,7 @@ def init_app(app, version=""):
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
     def is_logged_in():
-        return bool(configured() and session.get("u") == _user() and hmac.compare_digest(session.get("f", ""), _fingerprint()))
+        return role() is not None
 
     @app.route("/icons/<path:name>")
     def app_icons(name):
@@ -220,8 +262,16 @@ def init_app(app, version=""):
     def require_login():
         if request.path in ("/login", "/healthz", "/favicon.ico") or request.path.startswith(("/icons/", "/ui/")):
             return None
-        if is_logged_in():
+        rl = role()
+        if rl == "admin":
             return None
+        if rl == "copain":
+            m = "GET" if request.method == "HEAD" else request.method
+            if (m, request.path) in COPAIN_OK or any(m == a and request.path.startswith(b) for a, b in COPAIN_PREFIXES):
+                return None
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Ce n'est pas permis avec ton compte."}), 403
+            return redirect("/")
         if request.path.startswith("/api/"):
             return jsonify({"error": "Session expirée : reconnecte-toi."}), 401
         target = request.full_path.rstrip("?") if request.method == "GET" else "/"
@@ -245,11 +295,17 @@ def init_app(app, version=""):
         # Les deux vérifications sont toujours faites (temps constant, on ne révèle pas lequel est faux)
         user_ok = hmac.compare_digest(username.encode(), _user().encode())
         pass_ok = check_password_hash(_hash(), password)
-        if user_ok and pass_ok:
+        copain = None
+        if not user_ok:
+            d = lire_utilisateurs().get(username)
+            ok = check_password_hash(d["hash"], password) if d and d.get("hash") else check_password_hash(_hash(), password + "\0")
+            copain = d if d and ok and d.get("actif", True) else None
+        if (user_ok and pass_ok) or copain:
             _clear_fails(ip)
             session.clear()
-            session["u"] = _user()
-            session["f"] = _fingerprint()
+            session["u"] = _user() if copain is None else username
+            session["f"] = _fingerprint() if copain is None else _fp(copain["hash"])
+            session["r"] = "admin" if copain is None else "copain"
             session.permanent = request.form.get("remember") == "1"
             return redirect(_safe_next(request.form.get("next", "")))
 

@@ -62,7 +62,8 @@ import emby
 app = Flask(__name__)
 
 # Version: base manuelle + numéro de déploiement (nombre de commits) + hash court
-BASE_VERSION = "0.3"
+BASE_VERSION = "1.0"
+DEPART_VERSION = 30          # nombre de commits au passage en 1.0 : la version repart de 1.0.0
 
 
 def get_version():
@@ -71,7 +72,7 @@ def get_version():
         cwd = str(Path(__file__).parent)
         count = subprocess.check_output(["git", "rev-list", "--count", "HEAD"], cwd=cwd, text=True, stderr=subprocess.DEVNULL).strip()
         short = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=cwd, text=True, stderr=subprocess.DEVNULL).strip()
-        return f"v{BASE_VERSION}.{count} ({short})"
+        return f"v{BASE_VERSION}.{max(0, int(count) - DEPART_VERSION)} ({short})"
     except Exception:
         return f"v{BASE_VERSION}"
 
@@ -81,6 +82,12 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
 
 import auth
 auth.init_app(app, APP_VERSION)  # page de connexion + protection de toutes les routes
+import comptes   # 👥 comptes « copain » : créateur de posters, envoi vers LEUR Emby (jamais la médiathèque de l'admin)
+comptes.init_app(app, auth, Path(__file__).parent / "data")
+auth.COPAIN_OK = {("GET", "/"), ("POST", "/api/search"), ("POST", "/api/posters"), ("POST", "/api/upload"), ("POST", "/api/erase"),
+                  ("POST", "/api/preview"), ("POST", "/api/save"), ("GET", "/api/layout"), ("POST", "/api/clientlog"), ("GET", "/api/moi"),
+                  ("POST", "/api/copain/profil"), ("POST", "/api/copain/envoyer"), ("POST", "/api/copain/existant")}
+auth.COPAIN_PREFIXES = (("GET", "/api/upload/"), ("GET", "/api/download/"), ("GET", "/api/copain/existant/"))
 
 # ============================================================================
 # CONFIG
@@ -714,6 +721,92 @@ def api_preview():
         return jsonify({"error": str(e)}), 500
 
 
+def _sortie():
+    """Dossier des posters : celui de l'admin, ou « _copains/<id> » pour un copain (vidé au bout de 30 jours)."""
+    if auth.role() == "copain":
+        d = os.path.join(OUTPUT_BASE, "_copains", re.sub(r"[^A-Za-z0-9._@+-]", "_", auth.utilisateur() or "x"))
+        os.makedirs(d, exist_ok=True)
+        return d
+    return OUTPUT_BASE
+
+
+def _menage_copains():
+    """Chaque jour : les créations des copains de plus de 30 jours sont effacées."""
+    while True:
+        racine = os.path.join(OUTPUT_BASE, "_copains")
+        limite = time.time() - 30 * 86400
+        for dp, _, fs in os.walk(racine):
+            for f in fs:
+                try:
+                    if os.path.getmtime(os.path.join(dp, f)) < limite:
+                        os.remove(os.path.join(dp, f))
+                except OSError:
+                    pass
+        time.sleep(86400)
+
+
+@app.route("/api/copain/envoyer", methods=["POST"])
+def api_copain_envoyer():
+    """Poster du copain (ou poster de l'admin, « existant ») → l'élément correspondant de SON Emby (par identifiant TMDB)."""
+    p = comptes.profil(auth.utilisateur())
+    if not (p.get("emby_url") and p.get("emby_cle")):
+        return jsonify({"ok": False, "error": "Relie d'abord ton Emby (bouton « 🔌 Mon Emby » en haut)."}), 400
+    ok, msg = comptes.adresse_permise(p["emby_url"])
+    if not ok:
+        return jsonify({"ok": False, "error": msg}), 400
+    data = request.get_json(silent=True) or {}
+    media_type = "tv" if data.get("media_type") == "tv" else "movie"
+    tmdb_id = _to_int(data.get("tmdb_id"))
+    if not tmdb_id:
+        return jsonify({"ok": False, "error": "Choisis d'abord un film ou une série."}), 400
+    if data.get("existant"):
+        image = _poster_admin(media_type, tmdb_id, data.get("title") or "")
+    else:
+        f = os.path.join(_sortie(), os.path.basename(str(data.get("filename", ""))))
+        image = open(f, "rb").read() if os.path.isfile(f) else None
+    if not image:
+        return jsonify({"ok": False, "error": "Poster introuvable."}), 404
+    try:
+        with emby.serveur(p["emby_url"], p["emby_cle"]):
+            item = emby.find_item(media_type, tmdb_id, "", [data.get("title") or ""])
+            if not item:
+                return jsonify({"ok": False, "error": "Ce titre n'est pas trouvé dans ton Emby (identifiant TMDB)."}), 404
+            emby.set_primary_image(item["Id"], image)
+    except emby.EmbyError as e:
+        return jsonify({"ok": False, "error": str(e).replace("EMBY_API_KEY", "ta clé")}), 502
+    logger.info("Copain %s : poster envoyé dans son Emby (%s %s)", auth.utilisateur(), media_type, tmdb_id)
+    return jsonify({"ok": True, "message": f"✅ Poster envoyé dans ton Emby : {item.get('Name', '')}."})
+
+
+def _poster_admin(media_type, tmdb_id, titre):
+    """Poster actuel de ce titre dans l'Emby de l'admin (lecture seule), ou None."""
+    if not emby.configured():
+        return None
+    try:
+        item = emby.find_item(media_type, tmdb_id, "", [titre])
+        return emby.get_primary_image(item["Id"]) if item else None
+    except emby.EmbyError:
+        return None
+
+
+@app.route("/api/copain/existant", methods=["POST"])
+def api_copain_existant():
+    data = request.get_json(silent=True) or {}
+    media_type = "tv" if data.get("media_type") == "tv" else "movie"
+    tmdb_id = _to_int(data.get("tmdb_id"))
+    return jsonify({"existe": bool(tmdb_id and _poster_admin(media_type, tmdb_id, data.get("title") or ""))})
+
+
+@app.route("/api/copain/existant/<media_type>/<int:tmdb_id>")
+def api_copain_existant_image(media_type, tmdb_id):
+    img = _poster_admin("tv" if media_type == "tv" else "movie", tmdb_id, "")
+    if not img:
+        return jsonify({"error": "Pas de poster"}), 404
+    resp = send_file(BytesIO(img), mimetype="image/jpeg", as_attachment=request.args.get("dl") == "1", download_name=f"poster-{tmdb_id}.jpg")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
 @app.route("/api/save", methods=["POST"])
 def api_save():
     """Sauvegarde le poster composé"""
@@ -761,10 +854,10 @@ def api_save():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{safe_title}_{timestamp}.jpg"
         n = 2
-        while os.path.exists(os.path.join(OUTPUT_BASE, filename)):      # jamais d'écrasement (deux enregistrements dans la même seconde)
+        while os.path.exists(os.path.join(_sortie(), filename)):      # jamais d'écrasement (deux enregistrements dans la même seconde)
             filename = f"{safe_title}_{timestamp}_{n}.jpg"
             n += 1
-        filepath = os.path.join(OUTPUT_BASE, filename)
+        filepath = os.path.join(_sortie(), filename)
 
         composed.save(filepath, quality=95)
         logger.info(f"✅ Sauvegardé: {filepath}")
@@ -784,7 +877,7 @@ def api_save():
 def api_download(filename):
     """Envoie le poster sauvegardé au navigateur (téléchargement)"""
     safe_name = os.path.basename(filename)
-    filepath = os.path.join(OUTPUT_BASE, safe_name)
+    filepath = os.path.join(_sortie(), safe_name)
     if not os.path.isfile(filepath):
         return jsonify({"error": "Fichier introuvable"}), 404
     inline = request.args.get("inline") == "1"
@@ -1884,6 +1977,20 @@ HTML_TEMPLATE = """
         ::-webkit-scrollbar-track { background: transparent; }
         @media (max-width: 480px) { body { padding: 8px; } }
     </style>
+<style>
+/* 👥 Compte copain : créateur de posters seulement, envoi vers SON Emby */
+body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclick="sendToMouflanga()"] { display:none !important; }
+.copain-barre { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 12px; padding:10px 12px; border-radius:8px; background:rgba(82,181,75,.1); border:1px solid rgba(82,181,75,.4); font-size:14px; }
+.copain-barre b { margin-right:auto; }
+.copain-barre button { width:auto; padding:6px 10px; font-size:13px; }
+.copain-form { flex-basis:100%; display:none; gap:6px; flex-direction:column; }
+.copain-form.ouvert { display:flex; }
+.copain-form small { color:#aaa; }
+.copain-existant { margin:10px 0; padding:10px; border-radius:8px; background:#1f1f1f; display:flex; gap:10px; align-items:center; font-size:14px; }
+.copain-existant img { width:70px; border-radius:4px; }
+.copain-existant .act { display:flex; flex-direction:column; gap:6px; }
+.copain-existant button, .copain-existant a { width:auto; padding:6px 10px; font-size:13px; }
+</style>
 </head>
 <body>
     <div class="container">
@@ -3373,12 +3480,73 @@ HTML_TEMPLATE = """
             if (e.key === 'Enter') search();
         });
     </script>
+<script>
+// 👥 Compte copain : barre « Mon Emby », envoi vers son Emby, posters déjà faits par l’admin (lecture seule)
+(async function () {
+    let moi = {};
+    try { moi = await (await fetch('/api/moi')).json(); } catch (e) { return; }
+    if (moi.role !== 'copain') return;
+    document.body.classList.add('copain');
+    const barre = document.createElement('div');
+    barre.className = 'copain-barre';
+    barre.innerHTML = '<b>👤 ' + moi.id + '</b><span id="cpEtat"></span><button type="button" id="cpOuvrir">🔌 Mon Emby</button>' +
+        '<div class="copain-form" id="cpForm"><small>Adresse EXTERNE de ton Emby (ex. https://emby.exemple.fr) et une clé API (Emby → Tableau de bord → Clés API). Laisse vide pour seulement télécharger.</small>' +
+        '<input type="text" id="cpUrl" placeholder="https://…" autocapitalize="off" spellcheck="false"><input type="password" id="cpCle" placeholder="Clé API (inchangée si vide)" autocomplete="off">' +
+        '<button type="button" id="cpSave">Enregistrer</button><span id="cpMsg"></span></div>';
+    const cible = document.querySelector('.container') || document.body, entete = document.querySelector('.mou-header');
+    if (entete) entete.after(barre); else cible.insertBefore(barre, cible.firstChild);
+    const etat = () => { document.getElementById('cpEtat').textContent = moi.emby_url ? 'Emby relié ✅' : 'Emby pas relié : bouton Télécharger seulement'; };
+    etat();
+    document.getElementById('cpUrl').value = moi.emby_url || '';
+    document.getElementById('cpOuvrir').onclick = () => document.getElementById('cpForm').classList.toggle('ouvert');
+    document.getElementById('cpSave').onclick = async () => {
+        const r = await (await fetch('/api/copain/profil', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({emby_url: document.getElementById('cpUrl').value, emby_cle: document.getElementById('cpCle').value})})).json();
+        document.getElementById('cpMsg').textContent = r.message || r.error;
+        if (r.ok) { moi.emby_url = document.getElementById('cpUrl').value.trim(); document.getElementById('cpCle').value = ''; etat(); majBouton(); }
+    };
+    const bouton = document.querySelector('button[onclick="sendToLibrary()"]');
+    const majBouton = () => { if (bouton) { bouton.textContent = '📤 Envoyer dans mon Emby'; bouton.style.display = moi.emby_url ? '' : 'none'; } };
+    majBouton();
+    window.sendToLibrary = async function () {
+        const data = await saveToServer();
+        if (!data || !selectedItem) return;
+        const r = await (await fetch('/api/copain/envoyer', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({filename: data.filename, media_type: selectedItem.media_type, tmdb_id: selectedItem.id, title: selectedItem.title})})).json();
+        showMessage(r.message || r.error, r.ok ? 'success' : 'error');
+    };
+    // Poster déjà fait par l’admin pour ce titre : à télécharger ou à envoyer tel quel
+    const vu = {};
+    setInterval(async () => {
+        const it = selectedItem;
+        if (!it || !it.id || vu[it.media_type + it.id] !== undefined) return;
+        vu[it.media_type + it.id] = null;
+        const r = await (await fetch('/api/copain/existant', {method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({media_type: it.media_type, tmdb_id: it.id, title: it.title})})).json();
+        document.querySelectorAll('.copain-existant').forEach(e => e.remove());
+        if (!r.existe || selectedItem !== it) return;
+        const url = '/api/copain/existant/' + (it.media_type === 'tv' ? 'tv' : 'movie') + '/' + it.id;
+        const div = document.createElement('div');
+        div.className = 'copain-existant';
+        div.innerHTML = '<img src="' + url + '" alt=""><div><b>Poster déjà fait par l’admin</b><div class="act"><a class="button" href="' + url + '?dl=1">⬇️ Télécharger</a>' +
+            (moi.emby_url ? '<button type="button" id="cpEnvoyerExistant">📤 Envoyer dans mon Emby</button>' : '') + '</div></div>';
+        (document.getElementById('posters') || cible).insertAdjacentElement('beforebegin', div);
+        const b = document.getElementById('cpEnvoyerExistant');
+        if (b) b.onclick = async () => {
+            const x = await (await fetch('/api/copain/envoyer', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({existant: true, media_type: it.media_type, tmdb_id: it.id, title: it.title})})).json();
+            showMessage(x.message || x.error, x.ok ? 'success' : 'error');
+        };
+    }, 1500);
+})();
+</script>
 </body>
 </html>
 """
 
 
 if __name__ == "__main__":
+    threading.Thread(target=_menage_copains, daemon=True).start()
     logger.info("=" * 60)
     logger.info("🎬 Démarrage Personnaliseur de Posters")
     logger.info("=" * 60)
