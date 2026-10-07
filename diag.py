@@ -57,6 +57,8 @@ def setup_logging():
     console = logging.StreamHandler()
     console.setFormatter(fmt)
     root.addHandler(console)
+    if "unittest" in sys.modules:          # tests automatiques : jamais dans le vrai journal (faux démarrages, fausses alertes)
+        return
     try:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         fh = logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=1_000_000, backupCount=3, encoding="utf-8")

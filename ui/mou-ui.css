@@ -106,7 +106,7 @@ body.mou-login { display:flex; align-items:center; justify-content:center; paddi
     .mou-box { max-width:none; max-height:none; height:100%; border-radius:0; }
     .mou-box.narrow { height:auto; margin-top:auto; border-radius:12px 12px 0 0; }
     .mou-box textarea { min-height:0; }
-    .mou-actions-row .mou-btn { flex:1; padding:12px; }
+    .mou-actions-row .mou-btn { flex:1; padding:12px 6px; white-space:nowrap; }
     input[type=text], input[type=password], input[type=number], select { font-size:16px; }
 }
 
