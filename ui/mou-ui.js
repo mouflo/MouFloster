@@ -37,7 +37,7 @@
       (d.tmdb && !d.settings ? '<button type="button" class="mou-btn ghost small" id="mouTmdbOpen">🔑 Clé TMDB</button>' : '') +
       '<button type="button" class="mou-btn ghost small" id="mouLogOpen">🩺 Journal</button>' +
       '<form method="post" action="/logout"><button type="submit" class="mou-btn ghost small">Se déconnecter</button></form></div>' +
-      '<h1 class="mou-title"><img src="/icons/' + esc(app) + '.svg" alt=""><span><span class="w">' + esc(d.prefix || 'MouFl') + '</span><span class="g">' + esc(d.rest || '') + '</span></span></h1>' +
+      '<h1 class="mou-title"><a class="mou-accueil" href="/" title="Page principale"><img src="/icons/' + esc(app) + '.svg" alt=""><span><span class="w">' + esc(d.prefix || 'MouFl') + '</span><span class="g">' + esc(d.rest || '') + '</span></span></a></h1>' +
       (d.sub ? '<p class="mou-sub">' + esc(d.sub) + '</p>' : '');
     host.replaceWith(header);
 

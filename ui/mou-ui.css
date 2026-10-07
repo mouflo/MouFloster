@@ -117,3 +117,6 @@ body.mou-login { display:flex; align-items:center; justify-content:center; paddi
 .mou-toast.warn { background:#3b331f; border-color:#d9a43a; }
 .mou-toast.fin { opacity:0; transform:translateY(8px); transition:opacity .25s, transform .25s; }
 @keyframes mouToastIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:none; } }
+
+/* Logo et nom de l'appli : retour à la page principale */
+.mou-accueil { display:flex; align-items:center; gap:inherit; color:inherit; text-decoration:none; }
