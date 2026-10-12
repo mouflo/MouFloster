@@ -15,7 +15,7 @@ import requests
 
 from library import fold, parse_season, split_folder_name
 
-DEFAULT_URL = "http://192.168.1.134:8096"
+DEFAULT_URL = ""                    # à régler dans ⚙️ Réglages (aucune adresse propre à une maison dans le code)
 TIMEOUT = 8
 
 
@@ -52,7 +52,7 @@ def api_key():
 
 
 def configured():
-    return bool(api_key())
+    return bool(api_key()) and bool(base_url())
 
 
 def _request(method, path, extra_headers=None, **kwargs):

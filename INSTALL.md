@@ -21,29 +21,22 @@ un service systemd du même nom, et une mise à jour automatique par **cronjob**
 ## ⚡ Installation complète (sur une machine neuve)
 
 ```bash
-# 1. Clone le repo au bon endroit
 cd /opt
 git clone https://github.com/mouflo/MouFloster.git moufloster
-cd moufloster
-
-# 2. Crée l'environnement virtuel et installe les dépendances
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-deactivate
-
-# 3. Configure les clés API (jamais sur GitHub, stockées localement)
-bash set-secret.sh TMDB_API_KEY "ta-clé-tmdb"
-bash set-secret.sh EMBY_API_KEY "ta-clé-emby"   # optionnel
-
-# 4. Installe le service + la mise à jour automatique
-chmod +x install.sh
-bash install.sh
+bash /opt/moufloster/install.sh
 ```
 
-**C'est tout.** Le service démarre, se relance seul au boot, et se met à jour
-seul dès qu'un nouveau commit arrive sur `main`/`master` — sans aucune autre
-manipulation.
+Le script fait tout : paquets du système (`python3-venv`, `pip`, `git`, `curl`, `cron`), environnement Python et
+dépendances, service systemd (démarrage automatique), et **mise à jour automatique depuis GitHub à la fréquence de ton
+choix** (chaque nuit à 5 h conseillé, chaque heure, chaque minute ou jamais). Il ajoute une ligne à la crontab sans
+toucher aux autres ; pour changer la fréquence plus tard : `crontab -e`.
+
+Ensuite, ouvre `http://<adresse-du-serveur>:8000` **depuis ton réseau local** :
+1. à la première ouverture, la page te fait **créer ton identifiant** (ou, dans le terminal : `bash set-login.sh`) ;
+2. ⚙️ Réglages → **Dossiers** : le dossier de ta médiathèque (aucun chemin n'est imposé) et celui des posters ;
+3. ⚙️ Réglages → **Connexions** : clé TheMovieDB, adresse et clé d'Emby (champs vides par défaut).
+
+Tout est rangé dans `data/secrets.env` (droits 600, jamais sur GitHub).
 
 ## 📊 Vérifier le statut
 

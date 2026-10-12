@@ -23,7 +23,7 @@
     <div class="panel" data-onglet="Connexions">
         <h2>🎬 Emby</h2>
         <div class="sub">L'adresse de ton serveur Emby et sa clé API (Emby → Tableau de bord → Clés API). Sert à actualiser seulement le film ou la série dont tu viens de changer le poster.</div>
-        <div class="field"><label for="embyHost">Adresse</label><input type="text" id="embyHost" placeholder="http://192.168.1.134:8096" autocapitalize="off" spellcheck="false"></div>
+        <div class="field"><label for="embyHost">Adresse</label><input type="text" id="embyHost" placeholder="http://192.168.1.10:8096" autocapitalize="off" spellcheck="false"></div>
         <div class="row"><button class="btn" id="embyHostSave">Enregistrer l'adresse</button></div>
         <div id="embyHostMsg"></div>
         <div class="state" id="embyKeyState" style="margin-top:14px"></div>
@@ -45,7 +45,7 @@
         <h2>📚 MouFlanga (mangas)</h2>
         <div class="sub">Pour envoyer un poster comme couverture d'une série de ta bibliothèque de mangas MouFlanga. Dans MouFlanga → ⚙️ Réglages → MouFloster, appuie sur « Générer une clé API », puis colle ici la clé et l'adresse de MouFlanga.</div>
         <div class="state" id="mfgState"></div>
-        <div class="field"><label for="mfgUrl">Adresse de MouFlanga</label><input type="text" id="mfgUrl" placeholder="http://192.168.1.141:5002" autocapitalize="off" spellcheck="false"></div>
+        <div class="field"><label for="mfgUrl">Adresse de MouFlanga</label><input type="text" id="mfgUrl" placeholder="http://192.168.1.10:5002" autocapitalize="off" spellcheck="false"></div>
         <div class="field"><label for="mfgKey">Clé API de MouFlanga</label><input type="password" id="mfgKey" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Colle la clé ici"></div>
         <div class="row"><button class="btn ghost" id="mfgTest">Tester</button><button class="btn" id="mfgSave">Enregistrer</button><button class="btn ghost" id="mfgEffacer">Effacer</button></div>
         <div id="mfgMsg"></div>
@@ -69,7 +69,7 @@
     <div class="panel" data-onglet="Connexions">
         <h2>🎵 MouFlopening (génériques)</h2>
         <div class="sub">Après l'envoi d'un poster vers la médiathèque, si le film ou la série n'a pas encore de générique, MouFloster propose d'ouvrir MouFlopening directement sur ce titre. Mets les deux adresses : l'appli prend l'adresse locale quand tu es chez toi, l'adresse perso sinon. Vide = pas de proposition.</div>
-        <div class="field"><label for="mfoUrl">Adresse de MouFlopening sur le réseau local</label><input type="text" id="mfoUrl" placeholder="http://192.168.1.141:8001" autocapitalize="off" spellcheck="false"></div>
+        <div class="field"><label for="mfoUrl">Adresse de MouFlopening sur le réseau local</label><input type="text" id="mfoUrl" placeholder="http://192.168.1.10:8001" autocapitalize="off" spellcheck="false"></div>
         <div class="field"><label for="mfoUrlExt">Adresse perso de MouFlopening (depuis l'extérieur, facultatif)</label><input type="text" id="mfoUrlExt" placeholder="https://mouflopening.mondomaine.fr" autocapitalize="off" spellcheck="false"></div>
         <div class="row"><button class="btn" id="mfoSave">Enregistrer les adresses</button></div>
         <div id="mfoMsg"></div>

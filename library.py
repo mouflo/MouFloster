@@ -18,7 +18,7 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-LIBRARY_ROOT = Path(os.getenv("MEDIATHEQUE_DIR", "/mnt/mouflosyno/Emby-Media"))
+LIBRARY_ROOT = Path(os.getenv("MEDIATHEQUE_DIR", "") or "/mnt/mediatheque")   # réglable dans ⚙️ Réglages → Dossiers
 
 # Familles (dossiers à la racine de la médiathèque) selon le type TMDB
 FAMILIES = {
@@ -148,6 +148,21 @@ def find_candidates(media_type, titles, year=None, tmdb_id=None, families=None, 
                               "media_type": "tv" if family in FAMILIES["tv"] else "movie"})
     found.sort(key=lambda c: (-c["score"], c["name"].lower()))
     return found[:limit]
+
+
+def rel_depuis_emby(chemin_emby, media_type):
+    """Chemin donné par Emby (« /media/Series/Star.Trek.Strange.New.Worlds.(2022) ») → « Series/<même dossier> » ici.
+    Emby peut voir la médiathèque sous un autre chemin : on compare seulement le nom du dossier du titre."""
+    p = Path(chemin_emby or "")
+    if p.suffix and media_type == "movie":                # un film : Emby donne le fichier vidéo
+        p = p.parent
+    nom = p.name
+    if not nom:
+        return None
+    for family in FAMILIES.get(media_type, ALL_FAMILIES):
+        if nom in list_family(family):
+            return f"{family}/{nom}"
+    return None
 
 
 def search_folders(text, media_type=None, limit=12):

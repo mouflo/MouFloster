@@ -94,8 +94,8 @@ auth.COPAIN_PREFIXES = (("GET", "/api/upload/"), ("GET", "/api/download/"), ("GE
 # ============================================================================
 
 TMDB_API_KEY = os.getenv("TMDB_API_KEY", "TON_CLE_TMDB_ICI")
-MEDIATHEQUE_DIR = os.getenv("MEDIATHEQUE_DIR", "/mnt/mouflosyno/Emby-Media")
-OUTPUT_BASE = os.getenv("OUTPUT_DIR", "/mnt/mouflosyno/MouFloster")
+MEDIATHEQUE_DIR = os.getenv("MEDIATHEQUE_DIR", "") or "/mnt/mediatheque"
+OUTPUT_BASE = os.getenv("OUTPUT_DIR", "") or str(BASE_DIR / "data" / "posters")
 try:
     os.makedirs(OUTPUT_BASE, exist_ok=True)
 except OSError as _e:
@@ -112,6 +112,18 @@ IMG_HEIGHT = 1500
 # Border sizes (will be configurable)
 BORDER_ANIME = 45  # px (mesuré sur les exemples)
 BORDER_STANDARD = 22  # px (mesuré sur les exemples)
+
+
+def _bordure(border_style) -> int:
+    """Épaisseur du cadre en px : « anime » 45, « standard » 22, « 0 » sans cadre, ou un nombre de 0 à 150 (curseur)."""
+    if border_style == "anime":
+        return BORDER_ANIME
+    if border_style in (None, "", "standard"):
+        return BORDER_STANDARD
+    try:
+        return min(max(int(float(border_style)), 0), 150)
+    except (TypeError, ValueError):
+        return BORDER_STANDARD
 
 # Logging
 import diag
@@ -137,6 +149,8 @@ import tmdb_settings
 tmdb_settings.init_app(app, BASE_DIR, _set_tmdb_key)
 import settings_page
 settings_page.init_app(app, BASE_DIR, lambda: APP_VERSION, lambda: {"library": str(library.LIBRARY_ROOT), "output": OUTPUT_BASE})
+import redemarrer       # bouton « 🔄 Redémarrer l'appli » (fichier identique dans les quatre applis)
+redemarrer.init_app(app)
 
 import notif     # alertes Telegram (redémarrage inattendu, erreurs, lot terminé, mise à jour)
 notif.init_app(app, BASE_DIR, APP_VERSION, Path(BASE_DIR) / "data" / "moufloster.log", emby_settings._write_secret)
@@ -414,7 +428,7 @@ def _clamp_zoom(value):
 
 def cover_overflow(size, border_style, zoom=1.0):
     """Combien de pixels (sur 1000x1500) l'image dépasse du cadre une fois agrandie: c'est la marge de recadrage"""
-    border = BORDER_ANIME if border_style == "anime" else BORDER_STANDARD
+    border = _bordure(border_style)
     iw, ih = IMG_WIDTH - 2 * border, IMG_HEIGHT - 2 * border
     sw, sh = size
     scale = max(iw / sw, ih / sh) * _clamp_zoom(zoom)
@@ -450,7 +464,7 @@ def compose_poster(
     4. Grand chiffre gris (saison) centré derrière le titre
     5. Textes centrés à hauteur fixe
     """
-    border_width = BORDER_ANIME if border_style == "anime" else BORDER_STANDARD
+    border_width = _bordure(border_style)
     inner_w = IMG_WIDTH - (border_width * 2)
     inner_h = IMG_HEIGHT - (border_width * 2)
 
@@ -989,7 +1003,7 @@ def api_library_match():
     data = request.get_json(silent=True) or {}
     media_type = "tv" if data.get("media_type") == "tv" else "movie"
     if not library.LIBRARY_ROOT.is_dir():
-        return jsonify({"error": f"Médiathèque introuvable: {library.LIBRARY_ROOT}"}), 500
+        return jsonify({"error": f"Médiathèque introuvable : {library.LIBRARY_ROOT}. Choisis son dossier dans ⚙️ Réglages → Dossiers."}), 500
 
     titles = [t for t in (data.get("title"), data.get("original_title")) if t]
     year = _to_int(data.get("year"))
@@ -998,6 +1012,19 @@ def api_library_match():
 
     candidates = library.find_candidates(media_type, titles, year=year, tmdb_id=tmdb_id)
     memo = library.remembered(media_type, tmdb_id)
+    if not memo and tmdb_id and emby.configured():
+        # Emby connaît le dossier exact par l'identifiant TMDB (dossiers nommés par Sonarr avec des points, etc.)
+        try:
+            item = emby.find_item(media_type, tmdb_id, "", titles)
+            rel = library.rel_depuis_emby((item or {}).get("Path"), media_type) if item else None
+        except Exception as e:
+            logger.info("Dossier d'après Emby impossible : %s", e)
+            rel = None
+        if rel:
+            candidates = [c for c in candidates if c["rel"] != rel]
+            family, _, name = rel.partition("/")
+            candidates.insert(0, {"rel": rel, "family": family, "name": name, "score": 2.5,
+                                  "media_type": "tv" if family in library.FAMILIES["tv"] else "movie"})
 
     confidence, selected = "aucun", None
     if memo:
@@ -1903,6 +1930,10 @@ HTML_TEMPLATE = """
         .lib-compare img { max-width: 100%; max-height: 100%; box-shadow: 0 2px 10px rgba(0,0,0,.6); }
         .lib-compare .empty { color: #aab; font-size: 0.85em; padding: 10px; }
         .upload-astuce { font-size: 0.8em; color: #888; margin: 6px 0 4px; }
+        .cadre-reglage { margin: 6px 0 10px; }
+        .cadre-reglage input[type=range] { width: 100%; }
+        .cadre-presets { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+        .cadre-presets button { width: auto; padding: 6px 10px; font-size: 13px; }
         #depotVoile { position: fixed; inset: 0; z-index: 9999; background: rgba(82,181,75,.25); border: 4px dashed #52b54b; display: flex; align-items: center; justify-content: center; font-size: 1.6em; font-weight: 700; color: #fff; text-shadow: 0 2px 6px #000; pointer-events: none; }
         #depotVoile[hidden] { display: none; }
         .mfg-retour { display: inline-block; margin-top: 8px; padding: 6px 12px; border-radius: 6px; background: #52b54b; color: #fff; text-decoration: none; font-weight: 600; }
@@ -2076,8 +2107,13 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                     <h3>⚙️ Cadre & Dégradé</h3>
                     <div class="checkbox-group">
                         <div class="checkbox-item">
-                            <input type="checkbox" id="borderAnime" />
-                            <label for="borderAnime">Cadre Anime (large)</label>
+                            <input type="checkbox" id="cadreOn" checked />
+                            <label for="cadreOn">Cadre blanc</label>
+                        </div>
+                        <div class="cadre-reglage" id="cadreReglage">
+                            <label for="cadrePx">Épaisseur : <b id="cadrePxVal">22</b> px</label>
+                            <input type="range" id="cadrePx" min="2" max="120" step="1" value="22" />
+                            <div class="cadre-presets"><button type="button" class="secondary" data-cadre="22">Standard 22</button><button type="button" class="secondary" data-cadre="45">Anime 45</button><button type="button" class="secondary" data-cadre="5">Fin 5</button></div>
                         </div>
                         <div class="checkbox-item">
                             <input type="checkbox" id="showGradient" checked />
@@ -2374,9 +2410,31 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
         });
 
         // Auto-preview
-        ['text1', 'text2', 'text3', 'text4', 'text5', 'season', 'borderAnime', 'showGradient'].forEach(id => {
+        ['text1', 'text2', 'text3', 'text4', 'text5', 'season', 'cadreOn', 'showGradient'].forEach(id => {
             document.getElementById(id).addEventListener('change', generatePreview);
         });
+        // Cadre : activé ou non, épaisseur au curseur (préréglages 22 / 45 / 5) ; la dernière épaisseur est retenue sur l'appareil
+        function styleCadre() {
+            return document.getElementById('cadreOn').checked ? String(document.getElementById('cadrePx').value) : '0';
+        }
+        function majCadre() {
+            document.getElementById('cadrePxVal').textContent = document.getElementById('cadrePx').value;
+            document.getElementById('cadreReglage').style.opacity = document.getElementById('cadreOn').checked ? '1' : '.4';
+            try { localStorage.setItem('mfCadrePx', document.getElementById('cadrePx').value); localStorage.setItem('mfCadreOn', document.getElementById('cadreOn').checked ? '1' : '0'); } catch (e) {}
+        }
+        try {
+            const px = localStorage.getItem('mfCadrePx'), on = localStorage.getItem('mfCadreOn');
+            if (px) document.getElementById('cadrePx').value = px;
+            if (on !== null) document.getElementById('cadreOn').checked = on === '1';
+        } catch (e) {}
+        majCadre();
+        document.getElementById('cadreOn').addEventListener('change', majCadre);
+        document.getElementById('cadrePx').addEventListener('input', () => { majCadre(); generatePreview(true); });
+        document.querySelectorAll('[data-cadre]').forEach(b => b.addEventListener('click', () => {
+            document.getElementById('cadreOn').checked = true;
+            document.getElementById('cadrePx').value = b.dataset.cadre;
+            majCadre(); generatePreview();
+        }));
         ['text1Enabled', 'text2Enabled', 'text3Enabled', 'text4Enabled', 'text5Enabled', 'seasonEnabled'].forEach(id => {
             document.getElementById(id).addEventListener('change', generatePreview);
         });
@@ -2594,7 +2652,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                     b.status = '🎨 création du poster…'; batchRender();
                     const saved = await batchPost('/api/save', {
                         poster_url: b.poster.url, title: b.item.title,
-                        border_style: document.getElementById('borderAnime').checked ? 'anime' : 'standard',
+                        border_style: styleCadre(),
                         show_gradient: document.getElementById('showGradient').checked,
                         text_1: '', text_2: b.l2, text_3: b.l3, text_4: '', text_5: '', season: '', crop_x: 0.5, crop_y: 0.5, zoom: 1});
                     if (saved.error) throw new Error(saved.error);
@@ -2623,8 +2681,8 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
         }
 
         // ===== Mise en page mémorisée : reprendre un poster plus tard =====
-        const LAYOUT_CHECKS = ['borderAnime', 'showGradient', 'text1Enabled', 'text2Enabled', 'text3Enabled', 'text4Enabled', 'text5Enabled', 'seasonEnabled', 'seasonSpecial'];
-        const LAYOUT_VALUES = ['text1', 'text2', 'text3', 'text4', 'text5', 'season', 'cropX', 'cropY', 'zoom'];
+        const LAYOUT_CHECKS = ['cadreOn', 'showGradient', 'text1Enabled', 'text2Enabled', 'text3Enabled', 'text4Enabled', 'text5Enabled', 'seasonEnabled', 'seasonSpecial'];
+        const LAYOUT_VALUES = ['text1', 'text2', 'text3', 'text4', 'text5', 'season', 'cropX', 'cropY', 'zoom', 'cadrePx'];
         function captureLayout() {
             const l = {poster: selectedPoster, checks: {}, values: {}};
             LAYOUT_CHECKS.forEach(id => { l.checks[id] = document.getElementById(id).checked; });
@@ -2635,6 +2693,10 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             return item.libre ? {media_type: 'libre', tmdb_id: item.title} : {media_type: item.media_type, tmdb_id: item.id};
         }
         function applyLayout(l) {
+            if (l.checks && l.checks.borderAnime !== undefined && !(l.values || {}).cadrePx) {      // poster fait avant le curseur
+                l.values = Object.assign({}, l.values, {cadrePx: l.checks.borderAnime ? '45' : '22'});
+                l.checks = Object.assign({}, l.checks, {cadreOn: true});
+            }
             Object.entries(l.checks || {}).forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.checked = !!v; });
             Object.entries(l.values || {}).forEach(([id, v]) => { const el = document.getElementById(id); if (el) { el.value = v; el.dispatchEvent(new Event('input')); } });
             const en = document.getElementById('seasonEnabled');
@@ -2651,6 +2713,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                 }
                 document.querySelectorAll('.poster-thumb').forEach(el => el.classList.toggle('selected', el.getAttribute('src') === l.poster.url));
             }
+            majCadre();
             generatePreview();
         }
         async function rememberLayout() {
@@ -3017,7 +3080,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                     body: JSON.stringify({
                         poster_url: selectedPoster.url,
                         title: selectedItem.title,
-                        border_style: document.getElementById('borderAnime').checked ? 'anime' : 'standard',
+                        border_style: styleCadre(),
                         show_gradient: document.getElementById('showGradient').checked,
                         text_1: document.getElementById('text1Enabled').checked ? document.getElementById('text1').value : '',
                         text_2: document.getElementById('text2Enabled').checked ? document.getElementById('text2').value : '',
@@ -3065,7 +3128,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                     body: JSON.stringify({
                         poster_url: selectedPoster.url,
                         title: selectedItem.title,
-                        border_style: document.getElementById('borderAnime').checked ? 'anime' : 'standard',
+                        border_style: styleCadre(),
                         show_gradient: document.getElementById('showGradient').checked,
                         text_1: document.getElementById('text1Enabled').checked ? document.getElementById('text1').value : '',
                         text_2: document.getElementById('text2Enabled').checked ? document.getElementById('text2').value : '',

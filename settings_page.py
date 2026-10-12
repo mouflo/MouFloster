@@ -42,7 +42,7 @@ def init_app(app, base_dir, version_fn, get_dirs):
     def emby_host_save():
         host = str((request.get_json(silent=True) or {}).get("host", "")).strip().rstrip("/")
         if not _URL_RE.match(host) or _BAD_CHARS & set(host):
-            return jsonify({"ok": False, "error": "Adresse invalide : elle doit ressembler à http://192.168.1.134:8096"}), 400
+            return jsonify({"ok": False, "error": "Adresse invalide : elle doit ressembler à http://192.168.1.10:8096"}), 400
         _write_secret(secrets, "EMBY_URL", host)
         os.environ["EMBY_URL"] = host
         logger.info("Adresse d'Emby mise à jour depuis la page web : %s", host)
@@ -91,7 +91,7 @@ def init_app(app, base_dir, version_fn, get_dirs):
                 os.environ[nom] = ""
             return jsonify({"ok": True, "message": "Connexion à MouFlanga effacée."})
         if not _URL_RE.match(url) or _BAD_CHARS & set(url):
-            return jsonify({"ok": False, "error": "Adresse invalide : elle doit ressembler à http://192.168.1.141:5002"}), 400
+            return jsonify({"ok": False, "error": "Adresse invalide : elle doit ressembler à http://192.168.1.10:5002"}), 400
         if not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", cle):
             return jsonify({"ok": False, "error": "Colle la clé API générée dans MouFlanga → ⚙️ Réglages (sans espace)."}), 400
         try:

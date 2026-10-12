@@ -6,13 +6,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/opt/moufloster
-# Note : "%i" ici est un reste visiblement involontaire (c'est une syntaxe
-# de service systemd "template", sans effet dans un service normal comme
-# celui-ci) — la vraie clé TMDB est de toute façon chargée depuis
-# data/secrets.env via set-secret.sh, pas depuis cette variable. Sans danger
-# en l'état, mais à nettoyer si l'occasion se présente.
-Environment="TMDB_API_KEY=%i"
-Environment="OUTPUT_DIR=/mnt/mouflosyno/MouFloster"
+# Dossiers, adresses et clés : data/secrets.env (⚙️ Réglages ou set-secret.sh), jamais ici.
 ExecStart=/opt/moufloster/venv/bin/python app.py
 Restart=always
 RestartSec=10

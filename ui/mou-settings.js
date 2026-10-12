@@ -1,4 +1,4 @@
-/* MouFlux · outils communs de la page ⚙️ Réglages (fichier identique dans les trois dépôts) */
+/* MouFlux · outils communs de la page ⚙️ Réglages (fichier identique dans les quatre dépôts) */
 const $ = id => document.getElementById(id);
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 async function api(url, opts) {
@@ -55,6 +55,36 @@ function browseFolder(start, cb) { const st = _browseInit(); st.cb = cb; st.bg.c
 document.addEventListener('click', e => {
     const b = e.target.closest('[data-browse]'); if (!b) return;
     const input = $(b.dataset.browse); browseFolder(input && input.value || '/mnt', path => { if (input) input.value = path; });
+});
+
+// 🔄 Redémarrer l'appli (onglet Général) : route /api/redemarrer de redemarrer.py, présente dans les quatre applis.
+// Ajouté avant la création des onglets (cet écouteur passe en premier) ; la page se recharge quand l'appli répond de nouveau.
+document.addEventListener('DOMContentLoaded', () => {
+    const premier = document.querySelector('.panel[data-onglet]') || document.querySelector('.panel');
+    if (!premier || $('mouRedemarrer')) return;
+    const p = document.createElement('div');
+    p.className = 'panel'; p.dataset.onglet = 'Général';
+    p.innerHTML = '<h2>🔄 Redémarrer l\'appli</h2><div class="sub">Si l\'appli se comporte bizarrement ou après un réglage : elle s\'arrête puis repart toute seule en une quinzaine de secondes. Le serveur, lui, ne redémarre pas.</div>' +
+        '<div class="row"><button class="btn ghost" id="mouRedemarrer" type="button">🔄 Redémarrer l\'appli</button></div><div id="mouRedemarrerMsg"></div>';
+    premier.parentNode.appendChild(p);
+    $('mouRedemarrer').addEventListener('click', async () => {
+        if (!confirm('Redémarrer l\'appli maintenant ?')) return;
+        let r = await post('/api/redemarrer', {});
+        if (!r.ok && r.occupe) {
+            if (!confirm(r.error + '\n\nRedémarrer quand même ?')) return;
+            r = await post('/api/redemarrer', {forcer: true});
+        }
+        if (!r.ok) return say('mouRedemarrerMsg', r.error, false);
+        say('mouRedemarrerMsg', r.message, true);
+        $('mouRedemarrer').disabled = true;
+        const debut = Date.now();
+        await new Promise(ok => setTimeout(ok, 5000));
+        while (Date.now() - debut < 120000) {
+            try { const q = await fetch(location.pathname, {cache: 'no-store'}); if (q.ok) { location.reload(); return; } } catch (e) {}
+            await new Promise(ok => setTimeout(ok, 2000));
+        }
+        say('mouRedemarrerMsg', 'L\'appli ne répond pas encore : recharge la page dans une minute.', 'warn');
+    });
 });
 
 // Onglets : chaque <div class="panel" data-onglet="Général|Dossiers|Connexions|Comptes"> est rangé dans son onglet.
