@@ -283,13 +283,28 @@ UPLOAD_MAX_SIDE = 4000                    # une image envoyée plus grande est r
 Image.MAX_IMAGE_PIXELS = 60_000_000       # refuse les images géantes (mémoire du conteneur)
 
 
+def _uploads_gardes():
+    """Images envoyées dont une mise en page mémorisée a besoin (pour pouvoir modifier ce poster plus tard)."""
+    noms = set()
+    try:
+        for l in json.loads((BASE_DIR / "data" / "layouts.json").read_text(encoding="utf-8")).values():
+            url = ((l or {}).get("poster") or {}).get("url") or ""
+            if url.startswith(UPLOAD_URL_PREFIX):
+                noms.add(os.path.basename(url))
+    except (OSError, ValueError, AttributeError):
+        pass
+    return noms
+
+
 def _clean_uploads():
-    """Les images envoyées et les étapes de « Effacer un élément » ne servent que le temps de la retouche : nettoyées après 7 jours."""
+    """Les images envoyées et les étapes de « Effacer un élément » ne servent que le temps de la retouche : nettoyées après 7 jours
+    (sauf celles d'un poster qu'on peut reprendre : sa mise en page est mémorisée)."""
     import time as _t
     n = 0
+    gardes = _uploads_gardes()
     try:
         for f in os.scandir(UPLOAD_DIR):
-            if f.is_file() and _UPLOAD_RE.match(f.name) and _t.time() - f.stat().st_mtime > UPLOAD_KEEP_DAYS * 86400:
+            if f.is_file() and _UPLOAD_RE.match(f.name) and f.name not in gardes and _t.time() - f.stat().st_mtime > UPLOAD_KEEP_DAYS * 86400:
                 os.unlink(f.path)
                 n += 1
     except OSError:
@@ -1251,24 +1266,35 @@ def _read_layouts():
         return {}
 
 
+def _cle_layout(media_type, tmdb_id):
+    """Clé d'une mise en page : « tv:1234 », ou « libre:<nom> » pour un titre sans fiche TheMovieDB (image perso)."""
+    mt, tid = str(media_type or ""), str(tmdb_id or "")
+    if mt in ("movie", "tv", "collection") and tid.isdigit():
+        return f"{mt}:{tid}"
+    if mt == "libre":
+        nom = " ".join(tid.lower().split())[:200]
+        return f"libre:{nom}" if nom else None
+    return None
+
+
 @app.route("/api/layout")
 def api_layout_get():
-    key = f"{request.args.get('media_type', '')}:{request.args.get('tmdb_id', '')}"
-    return jsonify({"layout": _read_layouts().get(key)})
+    key = _cle_layout(request.args.get("media_type"), request.args.get("tmdb_id"))
+    return jsonify({"layout": _read_layouts().get(key) if key else None})
 
 
 @app.route("/api/layout", methods=["POST"])
 def api_layout_save():
     data = request.get_json(silent=True) or {}
-    mt, tid, layout = str(data.get("media_type", "")), str(data.get("tmdb_id", "")), data.get("layout")
-    if mt not in ("movie", "tv", "collection") or not tid.isdigit() or not isinstance(layout, dict):
+    key, layout = _cle_layout(data.get("media_type"), data.get("tmdb_id")), data.get("layout")
+    if not key or not isinstance(layout, dict):
         return jsonify({"error": "Mise en page invalide"}), 400
     if len(json.dumps(layout)) > 20000:
         return jsonify({"error": "Mise en page trop grande"}), 400
     with _layouts_lock:
         layouts = _read_layouts()
-        layouts.pop(f"{mt}:{tid}", None)
-        layouts[f"{mt}:{tid}"] = {**layout, "saved": datetime.now().strftime("%d/%m/%Y %H:%M")}
+        layouts.pop(key, None)
+        layouts[key] = {**layout, "saved": datetime.now().strftime("%d/%m/%Y %H:%M")}
         while len(layouts) > 200:                        # on garde les 200 dernières
             layouts.pop(next(iter(layouts)))
         LAYOUTS_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -1877,6 +1903,8 @@ HTML_TEMPLATE = """
         .lib-compare img { max-width: 100%; max-height: 100%; box-shadow: 0 2px 10px rgba(0,0,0,.6); }
         .lib-compare .empty { color: #aab; font-size: 0.85em; padding: 10px; }
         .upload-astuce { font-size: 0.8em; color: #888; margin: 6px 0 4px; }
+        #depotVoile { position: fixed; inset: 0; z-index: 9999; background: rgba(82,181,75,.25); border: 4px dashed #52b54b; display: flex; align-items: center; justify-content: center; font-size: 1.6em; font-weight: 700; color: #fff; text-shadow: 0 2px 6px #000; pointer-events: none; }
+        #depotVoile[hidden] { display: none; }
         .mfg-retour { display: inline-block; margin-top: 8px; padding: 6px 12px; border-radius: 6px; background: #52b54b; color: #fff; text-decoration: none; font-weight: 600; }
         .mfg-retour[hidden], #mfgBandeau[hidden] { display: none; }
         .lib-compare figcaption { font-size: 0.8em; color: #555; margin-top: 6px; line-height: 1.35; }
@@ -2037,7 +2065,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                         <input type="file" id="uploadFile" accept="image/*" style="display:none" />
                         <button type="button" class="secondary" id="eraseOpen">🧽 Effacer un élément</button>
                     </div>
-                    <div class="upload-astuce">Pas d'affiche trouvée (manga sans anime…) ? Tape juste le nom dans la recherche, puis « ⬆️ Envoyer mon image ».</div>
+                    <div class="upload-astuce">Pas d'affiche trouvée (manga sans anime…) ? Tape juste le nom dans la recherche, puis « ⬆️ Envoyer mon image » ou glisse l’image sur la page.</div>
                     <div id="layoutBar"></div>
                     <div class="loading" id="postersLoading">Chargement...</div>
                     <div id="posters" class="results"></div>
@@ -2150,6 +2178,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
     </div>
 
     <!-- Fenêtre: effacer un logo / texte -->
+    <div id="depotVoile" hidden>⬆️ Lâche l’image ici</div>
     <div class="modal-overlay" id="eraseModal">
         <div class="modal">
             <div class="modal-head">
@@ -2449,8 +2478,9 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                             resultsDiv.classList.remove('collapsed');
                             return;
                         }
+                        const autre = !selectedItem || selectedItem.id !== item.id || selectedItem.media_type !== item.media_type;
                         selectedItem = item;
-                        preremplirTitre(item.title);
+                        preremplirTitre(item.title, autre);
                         loadPosters(item);
                         document.querySelectorAll('.result-item').forEach(el => el.classList.remove('active'));
                         div.classList.add('active');
@@ -2459,6 +2489,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
 
                     resultsDiv.appendChild(div);
                 });
+                proposerPosterLibre([query, (() => { try { return mfgVenue.serie || ''; } catch (e) { return ''; } })()], resultsDiv);
             } finally {
                 document.getElementById('searchLoading').classList.remove('show');
             }
@@ -2600,31 +2631,46 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             LAYOUT_VALUES.forEach(id => { l.values[id] = document.getElementById(id).value; });
             return l;
         }
+        function layoutCle(item) {
+            return item.libre ? {media_type: 'libre', tmdb_id: item.title} : {media_type: item.media_type, tmdb_id: item.id};
+        }
         function applyLayout(l) {
             Object.entries(l.checks || {}).forEach(([id, v]) => { const el = document.getElementById(id); if (el) el.checked = !!v; });
             Object.entries(l.values || {}).forEach(([id, v]) => { const el = document.getElementById(id); if (el) { el.value = v; el.dispatchEvent(new Event('input')); } });
             const en = document.getElementById('seasonEnabled');
             document.getElementById('season').disabled = !en.checked || document.getElementById('seasonSpecial').checked;
-            if (l.poster) { selectedPoster = l.poster; document.querySelectorAll('.poster-thumb').forEach(el => el.classList.toggle('selected', el.src === l.poster.url)); }
+            const t2 = document.getElementById('text2'); t2.dataset.auto = t2.value;   // une nouvelle recherche pourra encore le remplacer
+            if (l.poster) {
+                selectedPoster = l.poster;
+                const pd = document.getElementById('posters');
+                if (l.poster.upload && ![...pd.querySelectorAll('img')].some(el => el.getAttribute('src') === l.poster.url)) {
+                    const img = document.createElement('img');            // l'image perso de ce poster revient dans la liste
+                    img.src = l.poster.url; img.title = 'Mon image'; img.className = 'poster-thumb';
+                    img.onclick = () => { selectPoster(l.poster); img.classList.add('selected'); };
+                    pd.insertBefore(img, pd.firstChild);
+                }
+                document.querySelectorAll('.poster-thumb').forEach(el => el.classList.toggle('selected', el.getAttribute('src') === l.poster.url));
+            }
             generatePreview();
         }
         async function rememberLayout() {
-            if (!selectedItem || !selectedPoster || selectedItem.libre) return;
+            if (!selectedItem || !selectedPoster) return;
             try {
                 await fetch('/api/layout', {method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({tmdb_id: selectedItem.id, media_type: selectedItem.media_type, layout: captureLayout()})});
+                    body: JSON.stringify({...layoutCle(selectedItem), layout: captureLayout()})});
             } catch (e) {}
         }
         async function offerLayout(item) {
             const bar = document.getElementById('layoutBar');
             bar.innerHTML = '';
             let data = {};
-            try { data = await (await fetch('/api/layout?tmdb_id=' + encodeURIComponent(item.id) + '&media_type=' + encodeURIComponent(item.media_type))).json(); } catch (e) { return; }
+            const cle = layoutCle(item);
+            try { data = await (await fetch('/api/layout?tmdb_id=' + encodeURIComponent(cle.tmdb_id) + '&media_type=' + encodeURIComponent(cle.media_type))).json(); } catch (e) { return; }
             if (!data.layout || selectedItem !== item) return;
             const b = document.createElement('button');
             b.type = 'button'; b.className = 'secondary layout-btn';
-            b.textContent = '♻️ Reprendre la dernière mise en page' + (data.layout.saved ? ' (' + data.layout.saved + ')' : '');
-            b.onclick = () => { applyLayout(data.layout); bar.innerHTML = ''; showMessage('Mise en page reprise : vérifie l’aperçu', 'success'); };
+            b.textContent = '✏️ Modifier le poster déjà fait' + (data.layout.saved ? ' (' + data.layout.saved + ')' : '');
+            b.onclick = () => { applyLayout(data.layout); bar.innerHTML = ''; showMessage('Poster repris tel que tu l’avais fait : modifie-le puis renvoie-le', 'success'); };
             bar.appendChild(b);
         }
 
@@ -2849,13 +2895,41 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
 
         // Ligne 2 (titre principal) : remplie avec le nom choisi si elle est vide ou si elle contient encore
         // le nom mis automatiquement la fois d'avant (enchaînement de posters) ; jamais si tu l'as modifiée à la main
-        function preremplirTitre(nom) {
+        // « nouveau » : un autre titre vient d'être choisi → son nom remplace toujours l'ancien (sinon un poster déjà fait garde le vieux titre)
+        function preremplirTitre(nom, nouveau) {
             const champ = document.getElementById('text2'), case2 = document.getElementById('text2Enabled');
-            const auto = champ.value.trim() === '' || champ.value === (champ.dataset.auto || '');
+            const auto = nouveau || champ.value.trim() === '' || champ.value === (champ.dataset.auto || '');
             if (!nom || !auto) return;
             champ.value = nom;
             champ.dataset.auto = nom;
             if (!case2.checked) { case2.checked = true; case2.dispatchEvent(new Event('change')); }
+        }
+
+        // Poster fait avec une image perso (sans fiche TheMovieDB) : on le retrouve par son nom pour le modifier
+        async function proposerPosterLibre(noms, resultsDiv) {
+            for (const nom of [...new Set(noms.map(n => (n || '').trim()).filter(Boolean))]) {
+                let data = {};
+                try { data = await (await fetch('/api/layout?media_type=libre&tmdb_id=' + encodeURIComponent(nom))).json(); } catch (e) { continue; }
+                if (!data.layout) continue;
+                const div = document.createElement('div');
+                div.className = 'result-item';
+                div.textContent = '✏️ ' + nom + ' · ton poster perso' + (data.layout.saved ? ' du ' + data.layout.saved : '');
+                div.addEventListener('click', () => {
+                    if (div.classList.contains('active') && resultsDiv.classList.contains('collapsed')) { resultsDiv.classList.remove('collapsed'); return; }
+                    selectedItem = {id: null, title: nom, original_title: '', media_type: 'tv', year: '?', libre: true};
+                    preremplirTitre(nom, true);
+                    allPosters = [];
+                    document.getElementById('posters').innerHTML = '';
+                    document.getElementById('langSelect').style.display = 'none';
+                    document.getElementById('layoutBar').innerHTML = '';
+                    applyLayout(data.layout);
+                    document.querySelectorAll('.result-item').forEach(el => el.classList.remove('active'));
+                    div.classList.add('active');
+                    resultsDiv.classList.add('collapsed');
+                    showMessage('Poster repris tel que tu l’avais fait : modifie-le puis renvoie-le', 'success');
+                });
+                resultsDiv.insertBefore(div, resultsDiv.firstChild);
+            }
         }
 
         // Titre « libre » : pas de fiche TheMovieDB, juste un nom
@@ -2874,11 +2948,29 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             return item;
         }
 
-        // Envoi manuel d'une image
-        document.getElementById('uploadFile').addEventListener('change', async (e) => {
+        // Envoi manuel d'une image : bouton, ou image glissée sur la page (posters, aperçu)
+        document.getElementById('uploadFile').addEventListener('change', (e) => {
             const file = e.target.files[0];
             e.target.value = '';
-            if (!file) return;
+            if (file) envoyerImage(file);
+        });
+        (function () {
+            let profondeur = 0;
+            const voile = document.getElementById('depotVoile');
+            const avecFichier = ev => ev.dataTransfer && [...ev.dataTransfer.types].includes('Files');
+            document.addEventListener('dragenter', ev => { if (!avecFichier(ev)) return; ev.preventDefault(); profondeur++; voile.hidden = false; });
+            document.addEventListener('dragover', ev => { if (avecFichier(ev)) ev.preventDefault(); });
+            document.addEventListener('dragleave', ev => { if (!avecFichier(ev)) return; profondeur = Math.max(0, profondeur - 1); if (!profondeur) voile.hidden = true; });
+            document.addEventListener('drop', ev => {
+                if (!avecFichier(ev)) return;
+                ev.preventDefault(); profondeur = 0; voile.hidden = true;
+                if (document.getElementById('eraseModal') && document.getElementById('eraseModal').classList.contains('show')) return;
+                const file = [...ev.dataTransfer.files].find(f => f.type.startsWith('image/'));
+                if (!file) return showMessage('Dépose une image (JPG, PNG, WebP…)', 'error');
+                envoyerImage(file);
+            });
+        })();
+        async function envoyerImage(file) {
             if (!selectedItem) {
                 // Sans recherche (manga sans anime, image perso) : le nom vient de MouFlanga, de la recherche tapée, ou on le demande
                 selectedItem = elementLibre();
@@ -2907,7 +2999,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             } finally {
                 document.getElementById('postersLoading').classList.remove('show');
             }
-        });
+        }
 
         let previewInFlight = false, previewQueued = false, previewOverflow = [0, 0];
 
