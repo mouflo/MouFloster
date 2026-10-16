@@ -37,10 +37,6 @@ reconstruction complète après une migration/panne, voir [`INSTALL.md`](INSTALL
 
 ![Les anciens posters d'un emplacement](docs/screenshots/restaurer.png)
 
-**Le lot de posters : plusieurs titres envoyés d'un coup**
-
-![Le lot de posters](docs/screenshots/lot.png)
-
 **Sur téléphone**
 
 ![Sur téléphone](docs/screenshots/mobile.png)
@@ -57,15 +53,16 @@ Tes copains qui ont leur propre Emby peuvent utiliser le créateur de posters : 
   - Gradient noir transparent
   - 5 couches de texte configurable (49px et 89px)
   - Numéro de saison/épisode
+- ✂️ **Titre découpé tout seul** : après une recherche, les lignes se remplissent comme sur les posters faits à la main : « Indiana Jones » en grand et « et le Temple maudit » dessous, ce qui suit « : » ou une virgule en petit (« Top Gun » / « Maverick »), un titre trop long sur deux lignes, « Les » posé au-dessus d'« Indestructibles », le numéro d'une suite (« Conjuring 2 », « Vol. 2 ») en grand chiffre gris. Tu peux tout modifier ; une ligne retouchée à la main n'est plus remplacée
+- 🔠 **Lettres toujours à la même taille** : pour que tous les posters se ressemblent, le titre reste en 89 px et les petites lignes en 49 px. Quand une ligne est trop longue, les petits mots s'écrivent en petit (« LE DIABLE / S'HABILLE en PRADA », « ANT-MAN et/la GUÊPE » avec les deux petits mots empilés), la ligne restant centrée. Si ça ne suffit pas, le champ passe en rouge : « Trop long : lettres à 69 px au lieu de 89 »
 - 👁️ **Aperçu en temps réel** : Vois le résultat immédiatement
 - 💾 **Sauvegarde JPEG** : Exporte tes posters personnalisés (1000×1500 px)
 - 🕘 **Restaurer un ancien poster** : chaque remplacement garde l'ancien poster ; la fenêtre d'envoi les montre et en remet un d'un clic (le poster actuel est sauvegardé avant)
 - ♻️ **Reprendre une mise en page** : affiche, recadrage, zoom, textes, cadre et dégradé sont retenus à chaque enregistrement ; en rouvrant le titre, « Reprendre la dernière mise en page » remet tout comme avant
-- 📦 **Lot de posters** : « ➕ Lot » sur plusieurs résultats, une affiche et deux lignes de titre par film/série, puis « Envoyer tout le lot » (seuls les dossiers trouvés avec certitude sont remplacés, anciens posters sauvegardés ; les autres restent à faire à la main)
 - 📚 **Sagas** : cherche aussi les sagas TheMovieDB (« Harry Potter - Saga »…) ; leur affiche est envoyée directement dans la collection Emby correspondante (l'ancienne affiche est sauvegardée dans `_anciens-posters/_sagas`)
 - 📖 **Couverture dans MouFlanga** : « 📚 Couverture dans MouFlanga » met le poster en couverture d'une série de la bibliothèque de mangas MouFlanga (sans Emby) ; la série est reconnue d'après le titre, l'ancienne couverture est sauvegardée dans `_anciens-posters/MouFlanga`. Depuis MouFlanga, « 🎨 Créer avec MouFloster » ouvre MouFloster avec la recherche faite et un bouton pour revenir
 - ✏️ **Image perso sans recherche** : pour un manga sans anime (pas d'affiche TheMovieDB), tape juste le nom puis « ⬆️ Envoyer mon image »
-- 📨 **Alertes Telegram** : redémarrage après un plantage ou une coupure du serveur, erreur pendant une action, lot de posters terminé, mise à jour installée (cases à cocher dans ⚙️ Réglages ; réglages Telegram repris de MouFlanimeXer, sujet de groupe propre à MouFloster)
+- 📨 **Alertes Telegram** : redémarrage après un plantage ou une coupure du serveur, erreur pendant une action, mise à jour installée (cases à cocher dans ⚙️ Réglages ; réglages Telegram repris de MouFlanimeXer, sujet de groupe propre à MouFloster)
 - 🎵 **Générique manquant** : après l'envoi d'un poster, si le film ou la série n'a pas encore de générique, une fenêtre propose d'ouvrir MouFlopening directement sur ce titre (adresses dans ⚙️ Réglages → MouFlopening) ; en revenant de MouFlopening, la fiche est remise telle qu'elle était (recherche, titre, affiche, textes, saison) pour enchaîner sur les saisons
 - 🆕 **Nouveautés sans poster** : l'accueil liste les films, séries et nouvelles saisons ajoutés dans Emby qui n'ont pas encore de poster fait avec MouFloster ; un appui sur « 🖼️ Poster », « Saison 2 » ou « Spéciaux » lance la recherche, choisit le titre et règle la saison. Menu « Remonter à » (depuis la mise en route, 1 mois, 3 mois, 6 mois, 1 an, tout ; choix par défaut dans ⚙️ Réglages), bouton « ✓ Déjà bon » pour ne plus proposer un titre. Les posters envoyés avant la mise en route sont repris du journal de l'appli
 - 🎞️ **Couverture des épisodes spéciaux** : dans la fenêtre d'envoi, la saison choisie montre la liste de ses épisodes avec leur nom (« Épisode 12 – Blue Exorcist : Le film ») ; un film TheMovieDB rangé dans les spéciaux d'une série est reconnu tout seul (dossier de la série proposé, épisode du même nom choisi), l'image devient la vignette de cet épisode dans Emby

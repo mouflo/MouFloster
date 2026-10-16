@@ -59,6 +59,8 @@ import library
 import mouflanga_link
 import emby
 import nouveautes   # 🆕 films, séries et saisons ajoutés dans Emby sans poster fait
+import titre        # découpage du titre en lignes, petits mots en petit (taille des lettres gardée)
+from functools import lru_cache
 
 app = Flask(__name__)
 
@@ -86,7 +88,7 @@ auth.init_app(app, APP_VERSION)  # page de connexion + protection de toutes les 
 import comptes   # 👥 comptes « copain » : créateur de posters, envoi vers LEUR Emby (jamais la médiathèque de l'admin)
 comptes.init_app(app, auth, Path(__file__).parent / "data")
 auth.COPAIN_OK = {("GET", "/"), ("POST", "/api/search"), ("POST", "/api/posters"), ("POST", "/api/upload"), ("POST", "/api/erase"),
-                  ("POST", "/api/preview"), ("POST", "/api/save"), ("GET", "/api/layout"), ("POST", "/api/clientlog"), ("GET", "/api/moi"),
+                  ("POST", "/api/preview"), ("POST", "/api/decoupe"), ("POST", "/api/save"), ("GET", "/api/layout"), ("POST", "/api/clientlog"), ("GET", "/api/moi"),
                   ("POST", "/api/copain/profil"), ("POST", "/api/copain/envoyer"), ("POST", "/api/copain/existant")}
 auth.COPAIN_PREFIXES = (("GET", "/api/upload/"), ("GET", "/api/download/"), ("GET", "/api/copain/existant/"))
 
@@ -153,7 +155,7 @@ settings_page.init_app(app, BASE_DIR, lambda: APP_VERSION, lambda: {"library": s
 import redemarrer       # bouton « 🔄 Redémarrer l'appli » (fichier identique dans les quatre applis)
 redemarrer.init_app(app)
 
-import notif     # alertes Telegram (redémarrage inattendu, erreurs, lot terminé, mise à jour)
+import notif     # alertes Telegram (redémarrage inattendu, erreurs, mise à jour)
 notif.init_app(app, BASE_DIR, APP_VERSION, Path(BASE_DIR) / "data" / "moufloster.log", emby_settings._write_secret)
 
 # ============================================================================
@@ -383,6 +385,7 @@ FONT_CANDIDATES = [
 ]
 
 
+@lru_cache(maxsize=64)
 def load_font(size: int):
     for path in FONT_CANDIDATES:
         try:
@@ -455,7 +458,8 @@ def compose_poster(
     season_number: str = "",   # grand chiffre gris derrière le titre
     crop_x: float = 0.5,       # 0 = bord gauche, 1 = bord droit (utile si l'image est trop large)
     crop_y: float = 0.5,       # 0 = haut, 1 = bas (utile si l'image est trop haute)
-    zoom: float = 1.0          # 1 = l'image remplit le cadre; >1 = zoom avant; <1 = dézoom (bords flous)
+    zoom: float = 1.0,         # 1 = l'image remplit le cadre; >1 = zoom avant; <1 = dézoom (bords flous)
+    rapport: list = None       # si fourni : taille réelle de chaque ligne (alerte « titre trop long » de la page)
 ) -> Image.Image:
     """
     Compose l'image finale (1000x1500) :
@@ -500,7 +504,7 @@ def compose_poster(
     final.paste(poster, (border_width, border_width))
 
     center_x = IMG_WIDTH // 2
-    max_text_w = inner_w - 60
+    max_text_w = titre.largeur_utile(border_width)
 
     # Grand chiffre/texte gris (saison) derrière le titre
     if season_number and season_number.strip() and season_number.strip() != "0":
@@ -517,17 +521,19 @@ def compose_poster(
         (t or "").strip().upper() for t in (text_layer_1, text_layer_2, text_layer_3, text_layer_4, text_layer_5)
     )
 
-    # Chaque ligne a sa position EXACTE du PSD (aucun décalage automatique)
-    for text, base_size, baseline in (
+    # Chaque ligne a sa position EXACTE du PSD (aucun décalage automatique) ; la taille est gardée :
+    # petits mots en petit si besoin, rétrécissement seulement en dernier recours (signalé à la page)
+    for num, (text, base_size, baseline) in enumerate((
         (t1, 49, BASELINE_L1),
         (t2, 89, BASELINE_L2),
         (t3, 89, BASELINE_L3),
         (t4, 49, BASELINE_L4),
         (t5, 49, BASELINE_L5),
-    ):
+    ), start=1):
         if text:
-            font, _ = fit_font(draw, text, base_size, max_text_w)
-            draw.text((center_x, baseline), text, fill="white", font=font, anchor="ms")
+            plan = titre.ecrire_ligne(draw, text, base_size, center_x, baseline, max_text_w, load_font)
+            if rapport is not None:
+                rapport.append({"ligne": num, "base": base_size, "taille": plan["taille"], "mode": plan["mode"]})
 
     return final
 
@@ -694,6 +700,15 @@ def api_erase():
     return jsonify({"url": UPLOAD_URL_PREFIX + name, "w": result.width, "h": result.height, "engine": engine, "note": note})
 
 
+@app.route("/api/decoupe", methods=["POST"])
+def api_decoupe():
+    """Lignes proposées pour le titre choisi (titre, sous-titre, petits mots, grand chiffre gris de la suite)."""
+    data = request.get_json(silent=True) or {}
+    nom = str(data.get("title") or "")[:300]
+    largeur = titre.largeur_utile(_bordure(data.get("border_style", "standard")))
+    return jsonify(titre.decouper(nom, largeur, load_font, film=data.get("media_type") == "movie"))
+
+
 @app.route("/api/preview", methods=["POST"])
 def api_preview():
     """Génère un aperçu du poster composé"""
@@ -720,6 +735,7 @@ def api_preview():
     img.thumbnail((1600, 2400))  # accélère l'aperçu pour les grosses images envoyées
 
     # Composer
+    lignes = []
     try:
         composed = compose_poster(
             img,
@@ -733,7 +749,8 @@ def api_preview():
             season_number=season,
             crop_x=data.get("crop_x", 0.5),
             crop_y=data.get("crop_y", 0.5),
-            zoom=data.get("zoom", 1.0)
+            zoom=data.get("zoom", 1.0),
+            rapport=lignes
         )
 
         # Convertir en base64 pour l'affichage
@@ -745,6 +762,7 @@ def api_preview():
         return jsonify({
             "preview": f"data:image/jpeg;base64,{img_base64}",
             "overflow": cover_overflow(img.size, border_style, data.get("zoom", 1.0)),
+            "lignes": lignes,
         })
     except Exception as e:
         logger.error(f"Erreur composition: {e}")
@@ -2013,17 +2031,12 @@ HTML_TEMPLATE = """
         .nouv-act button { width: auto !important; padding: 6px 10px !important; font-size: 0.82em !important; margin: 0 !important; }
         .nouv-vide { font-size: 0.85em; color: var(--muted); padding: 6px 0; }
         body.copain #nouvPanel { display: none !important; }
+        .taille-info { font-size: 0.82em; margin-top: 4px; line-height: 1.35; }
+        .taille-info:empty { display: none; }
+        .taille-info.rouge { color: #ff6b6b; font-weight: 600; }
+        .taille-info.doux { color: var(--muted); }
+        .text-layer input.trop-long { border-color: #ff6b6b !important; box-shadow: 0 0 0 1px #ff6b6b; }
         .result-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-        .batch-add { width: auto !important; padding: 4px 10px !important; font-size: 0.8em !important; flex: none; margin: 0 !important; }
-        .batch-hint { color: var(--muted); font-size: 0.82em; margin-bottom: 10px; }
-        .batch-item { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--line); }
-        .batch-thumb { width: 64px; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 4px; cursor: pointer; flex: none; background: var(--field); }
-        .batch-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-        .batch-name { font-weight: 600; font-size: 0.9em; }
-        .batch-info input { padding: 6px 8px; font-size: 0.85em; }
-        .batch-status { font-size: 0.78em; color: var(--muted); word-break: break-word; }
-        .batch-del { width: auto !important; padding: 4px 8px !important; flex: none; }
-        .batch-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
         .lib-backups { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
         .lib-backups figure { margin: 0; text-align: center; }
         .lib-backups img { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 4px; display: block; }
@@ -2153,17 +2166,6 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                     <div id="results" class="results-list"></div>
                 </div>
 
-                <!-- Lot de posters -->
-                <div class="section" id="batchPanel" style="display:none">
-                    <h3>📦 Lot de posters <span id="batchCount"></span></h3>
-                    <div class="batch-hint">Chaque titre garde son affiche et ses textes ; le cadre et le dégradé choisis à droite valent pour tout le lot. Seuls les titres dont le dossier est trouvé avec certitude sont envoyés (l'ancien poster est sauvegardé) ; les autres restent à faire à la main.</div>
-                    <div id="batchList"></div>
-                    <div class="batch-actions">
-                        <button id="batchSend" onclick="batchSendAll()">📤 Envoyer tout le lot vers la médiathèque</button>
-                        <button class="secondary" onclick="batchClear()">Vider le lot</button>
-                    </div>
-                </div>
-
                 <!-- Posters -->
                 <div class="section">
                     <h3>🖼️ Posters</h3>
@@ -2212,6 +2214,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                             <label for="text1Enabled">Ligne 1 (49px)</label>
                         </div>
                         <input type="text" id="text1" placeholder="Ex: Le" disabled />
+                        <div class="taille-info" id="text1Info"></div>
                     </div>
 
                     <div class="text-layer">
@@ -2220,6 +2223,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                             <label for="text2Enabled">Ligne 2 (89px)</label>
                         </div>
                         <input type="text" id="text2" placeholder="Titre principal" disabled />
+                        <div class="taille-info" id="text2Info"></div>
                     </div>
 
                     <div class="text-layer">
@@ -2228,6 +2232,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                             <label for="text3Enabled">Ligne 3 (89px)</label>
                         </div>
                         <input type="text" id="text3" placeholder="Suite du titre" disabled />
+                        <div class="taille-info" id="text3Info"></div>
                     </div>
 
                     <div class="text-layer">
@@ -2236,6 +2241,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                             <label for="text4Enabled">Ligne 4 (49px) · sous un titre d'1 ligne</label>
                         </div>
                         <input type="text" id="text4" placeholder="Ex: et le Roi" disabled />
+                        <div class="taille-info" id="text4Info"></div>
                     </div>
 
                     <div class="text-layer">
@@ -2244,6 +2250,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                             <label for="text5Enabled">Ligne 5 (49px) · sous un titre de 2 lignes</label>
                         </div>
                         <input type="text" id="text5" placeholder="Ex: Saison 2" disabled />
+                        <div class="taille-info" id="text5Info"></div>
                     </div>
 
                     <div class="text-layer">
@@ -2605,12 +2612,6 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                     const div = document.createElement('div');
                     div.className = 'result-item';
                     div.textContent = (item.media_type === 'collection' ? '📚 ' : '') + item.title + (item.year !== '?' ? ` (${item.year})` : '') + (item.media_type === 'collection' ? ' · saga' : '');
-                    if (item.media_type !== 'collection') {          // les sagas vont directement dans Emby : pas dans le lot
-                        const add = document.createElement('button');
-                        add.type = 'button'; add.className = 'batch-add'; add.textContent = '➕ Lot'; add.title = 'Ajouter au lot de posters';
-                        add.addEventListener('click', ev => { ev.stopPropagation(); batchAdd(item); });
-                        div.appendChild(add);
-                    }
                     div.addEventListener('click', () => {
                         // clic sur le titre déjà choisi (liste refermée): on rouvre la liste pour en changer
                         if (div.classList.contains('active') && resultsDiv.classList.contains('collapsed')) {
@@ -2619,8 +2620,8 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                         }
                         const autre = !selectedItem || selectedItem.id !== item.id || selectedItem.media_type !== item.media_type;
                         selectedItem = item;
-                        preremplirTitre(item.title, autre);
-                        div._chargement = loadPosters(item);
+                        const titrePret = preremplirTitre(item.title, autre);
+                        div._chargement = Promise.all([loadPosters(item), titrePret]).then(r => r[0]);
                         document.querySelectorAll('.result-item').forEach(el => el.classList.remove('active'));
                         div.classList.add('active');
                         resultsDiv.classList.add('collapsed');  // la liste se referme: seul le titre choisi reste affiché
@@ -2674,96 +2675,6 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             generatePreview();
         }
 
-        // ===== Lot de posters : plusieurs titres d'un coup, même cadre et même dégradé =====
-        const batch = [];
-        function batchSplitTitle(t) {
-            t = (t || '').trim();
-            const m = t.match(/^(.+?)\\s*(?::| - | – )\\s*(.+)$/);
-            if (m) return [m[1], m[2]];
-            if (t.length <= 16) return [t, ''];
-            const words = t.split(' '); let best = 1, bestDiff = 1e9;
-            for (let i = 1; i < words.length; i++) { const d = Math.abs(words.slice(0, i).join(' ').length - words.slice(i).join(' ').length); if (d < bestDiff) { bestDiff = d; best = i; } }
-            return [words.slice(0, best).join(' '), words.slice(best).join(' ')];
-        }
-        async function batchAdd(item) {
-            if (batch.some(b => b.item.id === item.id && b.item.media_type === item.media_type)) return showMessage('Déjà dans le lot', 'error');
-            const [l2, l3] = batchSplitTitle(item.title);
-            const entry = {item, posters: [], poster: null, l2, l3, status: '⏳ chargement des affiches…'};
-            batch.push(entry); batchRender();
-            try {
-                const data = await (await fetch('/api/posters', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({id: item.id, media_type: item.media_type})})).json();
-                const all = data.posters || [];
-                const pref = all.filter(p => p.lang === '').concat(all.filter(p => p.lang === 'fr'), all.filter(p => p.lang !== '' && p.lang !== 'fr'));
-                entry.posters = pref.slice(0, 12); entry.poster = entry.posters[0] || null;
-                entry.status = entry.poster ? '' : '❌ aucune affiche sur TheMovieDB';
-            } catch (e) { entry.status = '❌ affiches indisponibles'; }
-            batchRender();
-        }
-        function batchClear() { batch.length = 0; batchRender(); }
-        function batchRender() {
-            document.getElementById('batchPanel').style.display = batch.length ? 'block' : 'none';
-            document.getElementById('batchCount').textContent = batch.length ? '(' + batch.length + ')' : '';
-            const list = document.getElementById('batchList'); list.innerHTML = '';
-            batch.forEach((b, i) => {
-                const row = document.createElement('div'); row.className = 'batch-item';
-                const thumb = document.createElement('img'); thumb.className = 'batch-thumb'; thumb.alt = '';
-                if (b.poster) thumb.src = b.poster.url;
-                thumb.title = 'Clique pour changer d’affiche';
-                thumb.onclick = () => { if (b.posters.length > 1) { const k = b.posters.indexOf(b.poster); b.poster = b.posters[(k + 1) % b.posters.length]; batchRender(); } };
-                const info = document.createElement('div'); info.className = 'batch-info';
-                const name = document.createElement('div'); name.className = 'batch-name'; name.textContent = b.item.title + (b.item.year && b.item.year !== '?' ? ' (' + b.item.year + ')' : '') + (b.item.media_type === 'tv' ? ' · série' : ' · film');
-                const in2 = document.createElement('input'); in2.value = b.l2; in2.placeholder = 'Ligne 2 (titre)'; in2.oninput = () => { b.l2 = in2.value; };
-                const in3 = document.createElement('input'); in3.value = b.l3; in3.placeholder = 'Ligne 3 (suite, facultatif)'; in3.oninput = () => { b.l3 = in3.value; };
-                const st = document.createElement('div'); st.className = 'batch-status'; st.textContent = b.status || (b.posters.length > 1 ? '↻ clique sur l’affiche pour en changer (' + b.posters.length + ')' : '');
-                const del = document.createElement('button'); del.type = 'button'; del.className = 'secondary batch-del'; del.textContent = '✕'; del.title = 'Retirer du lot';
-                del.onclick = () => { batch.splice(i, 1); batchRender(); };
-                info.append(name, in2, in3, st);
-                row.append(thumb, info, del); list.appendChild(row);
-            });
-        }
-        async function batchPost(url, body) {
-            const res = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
-            return res.json();
-        }
-        async function batchSendAll() {
-            const todo = batch.filter(b => b.poster && !b.done);
-            if (!todo.length) return showMessage('Rien à envoyer : ajoute des titres avec une affiche', 'error');
-            if (!confirm('Envoyer ' + todo.length + ' poster(s) vers la médiathèque ? Les anciens posters seront sauvegardés.')) return;
-            const btn = document.getElementById('batchSend'); btn.disabled = true;
-            let sent = 0, manual = 0, errs = 0;
-            for (const b of todo) {
-                try {
-                    b.status = '🎨 création du poster…'; batchRender();
-                    const saved = await batchPost('/api/save', {
-                        poster_url: b.poster.url, title: b.item.title,
-                        border_style: styleCadre(),
-                        show_gradient: document.getElementById('showGradient').checked,
-                        text_1: '', text_2: b.l2, text_3: b.l3, text_4: '', text_5: '', season: '', crop_x: 0.5, crop_y: 0.5, zoom: 1});
-                    if (saved.error) throw new Error(saved.error);
-                    b.saved = saved.filename;
-                    b.status = '🔎 recherche du dossier…'; batchRender();
-                    const m = await batchPost('/api/library/match', {media_type: b.item.media_type, tmdb_id: b.item.id, title: b.item.title,
-                        original_title: b.item.original_title || '', year: b.item.year, season_text: ''});
-                    if (m.error) throw new Error(m.error);
-                    if (!m.selected || !['sur', 'memorise'].includes(m.confidence)) {
-                        b.status = '✋ dossier incertain : poster enregistré (' + saved.filename + '), à envoyer à la main'; manual++; batchRender(); continue;
-                    }
-                    const cand = (m.candidates || []).find(c => c.rel === m.selected) || {};
-                    const r = await batchPost('/api/library/apply', {saved_filename: saved.filename, rel: m.selected, action: 'replace',
-                        media_type: b.item.media_type, target_type: cand.media_type || b.item.media_type, tmdb_id: b.item.id,
-                        title: b.item.title, original_title: b.item.original_title || '', refresh_emby: true, season_text: '', episode_text: ''});
-                    if (r.error) throw new Error(r.error);
-                    b.done = true; sent++;
-                    b.status = '✅ ' + r.written + (r.backup ? ' (ancien sauvegardé)' : '') + (r.emby ? (r.emby.ok ? ' · 🔄 Emby' : ' · ⚠️ ' + r.emby.message) : '');
-                } catch (err) { b.status = '❌ ' + err.message; errs++; }
-                batchRender();
-            }
-            btn.disabled = false;
-            fetch('/api/notif/lot', {method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({envoyes: sent, manuels: manual, erreurs: errs})}).catch(() => {});
-            showMessage('Lot terminé : ' + sent + ' envoyé(s)' + (manual ? ', ' + manual + ' à faire à la main' : ''), sent ? 'success' : 'error');
-        }
-
         // ===== Mise en page mémorisée : reprendre un poster plus tard =====
         const LAYOUT_CHECKS = ['cadreOn', 'showGradient', 'text1Enabled', 'text2Enabled', 'text3Enabled', 'text4Enabled', 'text5Enabled', 'seasonEnabled', 'seasonSpecial'];
         const LAYOUT_VALUES = ['text1', 'text2', 'text3', 'text4', 'text5', 'season', 'cropX', 'cropY', 'zoom', 'cadrePx'];
@@ -2785,7 +2696,8 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             Object.entries(l.values || {}).forEach(([id, v]) => { const el = document.getElementById(id); if (el) { el.value = v; el.dispatchEvent(new Event('input')); } });
             const en = document.getElementById('seasonEnabled');
             document.getElementById('season').disabled = !en.checked || document.getElementById('seasonSpecial').checked;
-            const t2 = document.getElementById('text2'); t2.dataset.auto = t2.value;   // une nouvelle recherche pourra encore le remplacer
+            titreJeton++;                                       // un découpage encore en route n'écrase pas cette mise en page
+            titreAuto = Object.assign(lignesActuelles(), {saison: ''});   // une nouvelle recherche pourra encore la remplacer
             if (l.poster) {
                 selectedPoster = l.poster;
                 const pd = document.getElementById('posters');
@@ -3040,16 +2952,64 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             document.getElementById('eraseUse').addEventListener('click', eraseUse);
         })();
 
-        // Ligne 2 (titre principal) : remplie avec le nom choisi si elle est vide ou si elle contient encore
-        // le nom mis automatiquement la fois d'avant (enchaînement de posters) ; jamais si tu l'as modifiée à la main
-        // « nouveau » : un autre titre vient d'être choisi → son nom remplace toujours l'ancien (sinon un poster déjà fait garde le vieux titre)
-        function preremplirTitre(nom, nouveau) {
-            const champ = document.getElementById('text2'), case2 = document.getElementById('text2Enabled');
-            const auto = nouveau || champ.value.trim() === '' || champ.value === (champ.dataset.auto || '');
-            if (!nom || !auto) return;
-            champ.value = nom;
-            champ.dataset.auto = nom;
-            if (!case2.checked) { case2.checked = true; case2.dispatchEvent(new Event('change')); }
+        // Lignes du titre remplies toutes seules (découpage fait par le serveur, voir titre.py : titre, sous-titre,
+        // 2 lignes, numéro de suite en grand chiffre gris) si elles sont vides ou contiennent encore ce qui avait été
+        // mis automatiquement la fois d'avant ; jamais si tu les as modifiées à la main
+        // « nouveau » : un autre titre vient d'être choisi → ses lignes remplacent toujours les anciennes
+        const CHAMPS_TITRE = ['text1', 'text2', 'text3', 'text4', 'text5'];
+        let titreAuto = null, titreJeton = 0;
+        function lignesActuelles() {
+            const v = {};
+            CHAMPS_TITRE.forEach(id => { v[id] = document.getElementById(id + 'Enabled').checked ? document.getElementById(id).value : ''; });
+            return v;
+        }
+        function lignesIntactes() {
+            const v = lignesActuelles();
+            if (CHAMPS_TITRE.every(id => v[id].trim() === '')) return true;
+            return !!titreAuto && CHAMPS_TITRE.every(id => v[id] === (titreAuto[id] || ''));
+        }
+        async function preremplirTitre(nom, nouveau) {
+            if (!nom || !(nouveau || lignesIntactes())) return;
+            const jeton = ++titreJeton;
+            let d = null;
+            try {
+                d = await (await fetch('/api/decoupe', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({title: nom, media_type: selectedItem ? selectedItem.media_type : '', border_style: styleCadre()})})).json();
+            } catch (e) {}
+            if (jeton !== titreJeton) return;                   // un autre titre ou une mise en page reprise est passé entre-temps
+            if (!d || d.error || !d.l2) d = {l1: '', l2: nom, l3: '', l4: '', l5: '', saison: ''};
+            const auto = {};
+            CHAMPS_TITRE.forEach((id, i) => {
+                const val = d['l' + (i + 1)] || '';
+                document.getElementById(id).value = val;
+                document.getElementById(id).disabled = !val;
+                document.getElementById(id + 'Enabled').checked = !!val;
+                auto[id] = val;
+            });
+            const en = document.getElementById('seasonEnabled'), s = document.getElementById('season'), sp = document.getElementById('seasonSpecial');
+            if (d.saison) { en.checked = true; sp.checked = false; s.value = d.saison; }
+            else if (titreAuto && titreAuto.saison && en.checked && s.value === titreAuto.saison) { en.checked = false; s.value = ''; }
+            s.disabled = !en.checked || sp.checked;
+            auto.saison = d.saison || '';
+            titreAuto = auto;
+            generatePreview(true);
+        }
+
+        // Taille réelle des lettres de chaque ligne (renvoyée par l'aperçu) : on prévient quand une ligne a dû rétrécir
+        function afficherTailles(lignes) {
+            CHAMPS_TITRE.forEach((id, i) => {
+                const info = document.getElementById(id + 'Info'), champ = document.getElementById(id);
+                const l = (lignes || []).find(x => x.ligne === i + 1);
+                info.className = 'taille-info'; info.textContent = ''; champ.classList.remove('trop-long');
+                if (!l || l.mode === 'normal') return;
+                if (l.mode === 'petits') {
+                    info.classList.add('doux');
+                    info.textContent = 'Petits mots écrits en petit pour garder les lettres à ' + l.base + ' px.';
+                } else {
+                    info.classList.add('rouge'); champ.classList.add('trop-long');
+                    info.textContent = '⚠️ Trop long : lettres à ' + l.taille + ' px au lieu de ' + l.base + '. Raccourcis ou coupe autrement.';
+                }
+            });
         }
 
         // Poster fait avec une image perso (sans fiche TheMovieDB) : on le retrouve par son nom pour le modifier
@@ -3187,6 +3147,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                 const previewDiv = document.getElementById('previewImage');
                 previewDiv.innerHTML = `<img src="${data.preview}" draggable="false" />`;
                 previewOverflow = data.overflow || [0, 0];
+                afficherTailles(data.lignes);
                 previewDiv.classList.toggle('draggable', previewOverflow[0] > 1 || previewOverflow[1] > 1);
                 if (quiet !== true) showMessage('Aperçu généré', 'success');
             } catch (err) {

@@ -4,7 +4,7 @@ Alertes Telegram de MouFloster.
 - Réglages : TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID dans data/secrets.env, sinon ceux de MouFlanimeXer
   (/opt/mouflanimexer/telegram_config.json, en lecture seule) ; TELEGRAM_THREAD_ID = sujet propre à MouFloster.
 - Alertes (cases dans ⚙️ Réglages) : redémarrage après un arrêt inattendu (plantage ou coupure du serveur),
-  erreur interne (au plus une toutes les 30 minutes pour la même erreur), lot de posters terminé, mise à jour installée.
+  erreur interne (au plus une toutes les 30 minutes pour la même erreur), mise à jour installée.
 - Le jeton n'apparaît jamais dans les journaux ni dans les réponses.
 """
 import atexit
@@ -31,7 +31,6 @@ _LIEN = re.compile(r"t\.me/c/(\d{5,})/(\d+)(?:/(\d+))?")
 OPTIONS = {  # nom -> (libellé, activée par défaut)
     "REDEMARRAGE": ("Redémarrage après un arrêt inattendu (plantage, coupure du serveur)", True),
     "ERREURS": ("Erreur interne pendant une action (au plus une alerte par demi-heure pour la même erreur)", True),
-    "LOT": ("Lot de posters terminé (résumé)", True),
     "MAJ": ("Mise à jour installée (nouvelle version)", False),
 }
 WEBHOOK = ("Ce bot est déjà branché sur une autre application (par exemple Jeedom) : Telegram lui envoie directement "
@@ -235,15 +234,3 @@ def init_app(app, base_dir, version, journal, ecrire_secret):
         enregistrer("TELEGRAM_THREAD_ID", thread)
         logger.info("Telegram réglé depuis la page web")
         return jsonify({"ok": True, "message": "Enregistré : un message de test vient d'arriver sur Telegram."})
-
-    @app.route("/api/notif/lot", methods=["POST"])
-    def notif_lot():
-        b = request.get_json(silent=True) or {}
-        n = lambda k: max(0, int(b.get(k) or 0))
-        texte = f"📦 {APP} : lot de posters terminé — {n('envoyes')} envoyé(s) dans la médiathèque"
-        if n("manuels"):
-            texte += f", {n('manuels')} à envoyer à la main (dossier incertain)"
-        if n("erreurs"):
-            texte += f", {n('erreurs')} en erreur"
-        alerter("LOT", texte + ".")
-        return jsonify({"ok": True})
