@@ -87,6 +87,12 @@ class EcritureTest(unittest.TestCase):
         self.assertEqual(plan["mode"], "reduit")
         self.assertLess(plan["taille"], 89)
 
+    def test_barre_force_l_empilement(self):
+        plan = titre.plan_ligne("Raya et/le Dragon", 89, LARGEUR, police)
+        self.assertEqual((plan["mode"], plan["taille"]), ("normal", 89))
+        self.assertIn(("pile", "ET", "LE"), plan["blocs"])
+        self.assertIn(("mot", "AC/DC"), titre.plan_ligne("AC/DC", 89, LARGEUR, police)["blocs"])
+
     def test_ligne_centree_avec_les_mots_empiles(self):
         img = Image.new("L", (1000, 200), 0)
         titre.ecrire_ligne(ImageDraw.Draw(img), "Ant-Man et la Guêpe", 89, 500, 150, LARGEUR, police, couleur=255)

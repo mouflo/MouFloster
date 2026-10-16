@@ -7,6 +7,7 @@ des posters reste homogène. Règles tirées des posters faits à la main sous P
 - « Indiana Jones et le Temple maudit », « Vaiana, la légende… » : coupés avant « et le… » ou à la virgule,
   sauf si le titre commence par un article (« La Belle et la Bête », « Le Bon, la Brute et le Truand »).
 - « Ant-Man et la Guêpe » (un seul mot après « et la ») reste sur une ligne : « et / la » empilés en tout petit.
+  Taper « et/la » (avec une barre) dans un champ les empile toujours, même quand la ligne tiendrait sans ça.
 - Titre trop long : petits mots en petit (« LE SEIGNEUR des ANNEAUX »), sinon 2 lignes de 89 px ; un article seul
   passe au-dessus (« LES » / « INDESTRUCTIBLES ») ; sous-titre trop long : 2 lignes de 49 px.
 - Numéro de suite (« Conjuring 2 », « Vol. 2 », « Partie 1 ») : grand chiffre gris derrière le titre (films).
@@ -52,17 +53,26 @@ def _commence_par_article(texte):
 # Écriture d'une ligne : taille gardée, petits mots en petit, rétrécissement seulement en dernier recours
 # ---------------------------------------------------------------------------------------------------------------
 
+def _bloc_mot(mot):
+    """Mot écrit en grand, ou « ET/LA » tapé avec une barre : les deux petits mots toujours empilés.
+    Seulement entre deux petits mots (« AC/DC » reste tel quel)."""
+    a, barre, b = mot.partition("/")
+    if barre and a.lower() in PETITS_MOTS and b.lower() in PETITS_MOTS:
+        return ("pile", a, b)
+    return ("mot", mot)
+
+
 def _blocs(mots, avec_petits):
     """Découpe une ligne en blocs : ("mot", texte) en grand, ("petit", texte) ou ("pile", haut, bas)."""
     if not avec_petits or len(mots) < 2:
-        return [("mot", m) for m in mots]
+        return [_bloc_mot(m) for m in mots]
     petit = [m.lower() in PETITS_MOTS and i < len(mots) - 1 for i, m in enumerate(mots)]
     if all(petit[:-1]) and len(mots) <= 2 or not any(petit):
-        return [("mot", m) for m in mots]
+        return [_bloc_mot(m) for m in mots]
     blocs, i = [], 0
     while i < len(mots):
         if not petit[i]:
-            blocs.append(("mot", mots[i]))
+            blocs.append(_bloc_mot(mots[i]))
             i += 1
             continue
         j = i

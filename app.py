@@ -2207,6 +2207,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                 <!-- Textes -->
                 <div class="section">
                     <h3>📝 Textes</h3>
+                    <div class="taille-info doux" style="margin:-4px 0 10px">Astuce : tape « et/la » (avec une barre) pour empiler deux petits mots en tout petit, comme « ANT-MAN et/la GUÊPE ».</div>
 
                     <div class="text-layer">
                         <div class="checkbox-item">
