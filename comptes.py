@@ -16,7 +16,7 @@ from urllib.parse import urlparse
 from flask import jsonify, request
 
 logger = logging.getLogger(__name__)
-_ID = re.compile(r"[A-Za-z0-9._@+-]{2,64}")
+_ID = re.compile(r"[A-Za-z0-9@+-][A-Za-z0-9._@+-]{1,63}")     # jamais « .. » ni « _… » au début (dossiers de l'admin)
 _ETAT = {"dossier": Path("copains")}
 
 
@@ -83,7 +83,7 @@ def init_app(app, auth, data_dir, nom_role="copain"):
         d = auth.lire_utilisateurs()
         if action == "ajouter":
             if not _ID.fullmatch(uid):
-                return jsonify({"ok": False, "error": "Identifiant : 2 à 64 caractères (lettres, chiffres, . _ @ + -)."}), 400
+                return jsonify({"ok": False, "error": "Identifiant : 2 à 64 caractères (lettres, chiffres, . _ @ + -), sans « . » ni « _ » au début."}), 400
             if uid in d or uid == os.getenv("APP_USER", ""):
                 return jsonify({"ok": False, "error": f"L'identifiant « {uid} » est déjà pris."}), 409
         elif uid not in d:

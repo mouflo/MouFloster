@@ -58,6 +58,8 @@ def configured():
 def _request(method, path, extra_headers=None, **kwargs):
     headers = {"X-Emby-Token": api_key(), "Accept": "application/json", **(extra_headers or {})}
     try:
+        if getattr(_autre, "v", None):           # Emby d'un copain : pas de redirection (vers le réseau local, par exemple)
+            kwargs.setdefault("allow_redirects", False)
         resp = requests.request(method, base_url() + path, headers=headers, timeout=TIMEOUT, **kwargs)
     except requests.exceptions.ConnectionError:
         raise EmbyError(f"Emby injoignable ({base_url()})")
@@ -65,6 +67,8 @@ def _request(method, path, extra_headers=None, **kwargs):
         raise EmbyError("Emby ne répond pas (délai dépassé)")
     except requests.exceptions.RequestException as e:
         raise EmbyError(f"Erreur de connexion à Emby: {e}")
+    if 300 <= resp.status_code < 400:
+        raise EmbyError("Emby a répondu par une redirection : mets l'adresse finale de ton Emby")
     if resp.status_code in (401, 403):
         raise EmbyError("Clé API Emby refusée (vérifie EMBY_API_KEY)")
     if resp.status_code >= 400:
