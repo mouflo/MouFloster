@@ -75,6 +75,14 @@
         <div id="mfoMsg"></div>
     </div>
 
+    <div class="panel" data-onglet="Connexions">
+        <h2>🆕 Nouveautés sans poster</h2>
+        <div class="sub">Sur la page d'accueil, MouFloster liste les films, séries et nouvelles saisons ajoutés dans Emby qui n'ont pas encore de poster fait avec l'appli. Choisis jusqu'où remonter par défaut (le menu de l'accueil permet d'en changer à la volée). « Depuis la mise en route » : seulement ce qui arrive à partir du jour où la liste a été activée.</div>
+        <div class="field"><label for="nouvDefaut">Remonter par défaut à</label><select id="nouvDefaut"></select></div>
+        <div class="row"><button class="btn" id="nouvSave">Enregistrer</button></div>
+        <div id="nouvMsg"></div>
+    </div>
+
     <div class="panel" data-onglet="Dossiers">
         <h2>📁 Dossiers</h2>
         <div class="sub">Où se trouve ta médiathèque et où ranger les posters créés. L'appli redémarre après l'enregistrement (quelques secondes).</div>
@@ -154,6 +162,14 @@ loadTg();
 
 (async () => { const a = await api('/api/settings/mouflopening'); $('mfoUrl').value = a.url || ''; $('mfoUrlExt').value = a.url_externe || ''; })();
 simpleSave('mfoSave', 'mfoMsg', '/api/settings/mouflopening', () => ({url: $('mfoUrl').value, url_externe: $('mfoUrlExt').value}));
+
+(async () => {
+    const r = await api('/api/settings/nouveautes'), sel = $('nouvDefaut');
+    const debut = r.debut ? new Date(r.debut).toLocaleDateString('fr-FR') : '';
+    (r.choix || []).forEach(c => { const o = document.createElement('option'); o.value = c.valeur; o.textContent = c.libelle + (c.valeur === 'debut' && debut ? ' (' + debut + ')' : ''); sel.appendChild(o); });
+    sel.value = r.defaut || 'debut';
+})();
+simpleSave('nouvSave', 'nouvMsg', '/api/settings/nouveautes', () => ({defaut: $('nouvDefaut').value}));
 
 // ---------- 👥 Copains ----------
 async function loadUsr() {

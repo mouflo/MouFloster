@@ -305,6 +305,48 @@ def find_episode_video(rel, season, episode):
     return found[0] if found else None
 
 
+_NFO_TITRE = re.compile(r"<title>\s*(.*?)\s*</title>", re.I | re.S)
+
+
+def _titre_nfo(chemin):
+    try:
+        with open(chemin, encoding="utf-8", errors="replace") as f:
+            m = _NFO_TITRE.search(f.read(20000))
+    except OSError:
+        return ""
+    if not m:
+        return ""
+    t = re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", m.group(1), flags=re.S)
+    return t.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"').replace("&apos;", "'").strip()
+
+
+def list_episodes(rel, season):
+    """Épisodes d'une saison (fichiers vidéo S{season}E…) : [{episode, titre, video, thumb}] triés par numéro.
+    Le titre vient du .nfo à côté de la vidéo (écrit par Emby / Sonarr), vide s'il n'y en a pas."""
+    folder = resolve_folder(rel)
+    if folder is None or season is None:
+        return []
+    vus = {}
+    for dirpath, dirnames, filenames in os.walk(folder, onerror=lambda e: None):
+        dirnames[:] = [d for d in dirnames if not _is_ignored(d)]
+        noms = set(filenames)
+        for fn in filenames:
+            if not fn.lower().endswith(_VIDEO_EXT) or _is_ignored(fn):
+                continue
+            m = _EP_RE.search(fn)
+            if not m or int(m.group(1)) != season:
+                continue
+            ep = int(m.group(2))
+            if ep in vus:
+                continue
+            base = os.path.splitext(fn)[0]
+            titre = _titre_nfo(os.path.join(dirpath, base + ".nfo")) if base + ".nfo" in noms else ""
+            if _EP_RE.search(titre):                      # titre = nom du fichier (pas de vrai titre) : on n'affiche que le numéro
+                titre = ""
+            vus[ep] = {"episode": ep, "titre": titre, "video": fn, "thumb": base + "-thumb.jpg" in noms}
+    return [vus[k] for k in sorted(vus)]
+
+
 def resolve_target(rel, media_type, season_text=None, episode_text=None):
     """
     Où va le poster ? Retourne {"sub", "name", "episode": bool, "video"}.

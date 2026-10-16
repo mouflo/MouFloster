@@ -58,6 +58,7 @@ except ImportError:
 import library
 import mouflanga_link
 import emby
+import nouveautes   # 🆕 films, séries et saisons ajoutés dans Emby sans poster fait
 
 app = Flask(__name__)
 
@@ -1011,6 +1012,12 @@ def api_library_match():
     library.clear_cache()
 
     candidates = library.find_candidates(media_type, titles, year=year, tmdb_id=tmdb_id)
+    if media_type == "movie" and not any(c["score"] >= 0.9 for c in candidates):
+        # film absent des dossiers de films : souvent un spécial d'une série (Blue Exorcist, le film) ; jamais « sûr »
+        for c in library.find_candidates("tv", titles, min_score=0.85, limit=3):
+            if not any(x["rel"] == c["rel"] for x in candidates):
+                candidates.append({**c, "score": min(c["score"], 0.89)})
+        candidates.sort(key=lambda c: -c["score"])
     memo = library.remembered(media_type, tmdb_id)
     if not memo and tmdb_id and emby.configured():
         # Emby connaît le dossier exact par l'identifiant TMDB (dossiers nommés par Sonarr avec des points, etc.)
@@ -1115,6 +1122,8 @@ def api_library_apply():
         return jsonify({"error": f"Écriture impossible: {e}"}), 500
 
     library.remember(media_type, _to_int(data.get("tmdb_id")), rel)
+    if not tgt["episode"]:                                        # 🆕 ce titre (ou cette saison) n'est plus à faire
+        nouveautes.marquer(rel, library.parse_season(data.get("season_text")) if target_type == "tv" else None)
     logger.info(f"📁 Médiathèque: {result['written']} (action={action}, sauvegarde={result['backup']})")
     dossier_titre = library.resolve_dir(rel, "")                 # dossier du film / de la série (pas la saison)
     result["generique"] = _a_un_generique(dossier_titre) if dossier_titre else None
@@ -1130,6 +1139,58 @@ def api_library_apply():
                                        data.get("episode_text") if tgt["episode"] else None)
         logger.info(f"🔄 Emby: {emby_result}")
     return jsonify({"success": True, **result, "emby": emby_result})
+
+
+@app.route("/api/library/episodes", methods=["POST"])
+def api_library_episodes():
+    """Épisodes d'une saison du dossier (spéciaux surtout : films rangés dans la saison 0), pour les choisir dans une liste"""
+    data = request.get_json(silent=True) or {}
+    season = library.parse_season(data.get("season_text"))
+    if season is None or library.resolve_folder(data.get("rel")) is None:
+        return jsonify({"episodes": []})
+    return jsonify({"episodes": library.list_episodes(data.get("rel"), season)})
+
+
+# ---------- 🆕 Nouveautés : ajoutés dans Emby, pas encore de poster fait ----------
+
+@app.route("/api/nouveautes")
+def api_nouveautes():
+    if not emby.configured():
+        return jsonify({"error": "Emby n'est pas réglé (⚙️ Réglages → Connexions)", "elements": []})
+    try:
+        return jsonify(nouveautes.lister(request.args.get("choix")))
+    except emby.EmbyError as e:
+        return jsonify({"error": str(e), "elements": []})
+    except Exception as e:
+        logger.error(f"Nouveautés : {e}")
+        return jsonify({"error": "Lecture d'Emby impossible", "elements": []})
+
+
+@app.route("/api/nouveautes/deja-bon", methods=["POST"])
+def api_nouveautes_deja_bon():
+    data = request.get_json(silent=True) or {}
+    rel = data.get("rel")
+    if library.resolve_folder(rel) is None:
+        return jsonify({"error": "Dossier introuvable"}), 400
+    saisons = data.get("saisons")
+    if isinstance(saisons, list):
+        for n in saisons:
+            if _to_int(n) is not None:
+                nouveautes.marquer(rel, _to_int(n))
+    if data.get("poster"):
+        nouveautes.marquer(rel)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/settings/nouveautes", methods=["GET", "POST"])
+def api_settings_nouveautes():
+    if request.method == "POST":
+        try:
+            nouveautes.regler_defaut((request.get_json(silent=True) or {}).get("defaut"))
+        except (ValueError, OSError) as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
+        return jsonify({"ok": True, "message": "Choix enregistré."})
+    return jsonify(nouveautes.reglages())
 
 
 # ---------- MouFlopening : le titre a-t-il un générique ? (même règle que MouFlopening et Emby) ----------
@@ -1942,6 +2003,16 @@ HTML_TEMPLATE = """
         .lib-compare figcaption b { color: #222; }
         .lib-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
         .layout-btn { width: 100%; margin: 6px 0 10px; }
+        /* 🆕 Nouveautés sans poster */
+        .nouv-barre { display: flex; align-items: center; gap: 8px; white-space: nowrap; margin-bottom: 8px; font-size: 0.85em; color: var(--muted); }
+        .nouv-barre select { flex: 1; width: auto; }
+        .nouv-item { padding: 8px 0; border-top: 1px solid var(--line); }
+        .nouv-nom { font-weight: 600; font-size: 0.9em; margin-bottom: 6px; }
+        .nouv-nom small { font-weight: 400; color: var(--muted); }
+        .nouv-act { display: flex; flex-wrap: wrap; gap: 6px; }
+        .nouv-act button { width: auto !important; padding: 6px 10px !important; font-size: 0.82em !important; margin: 0 !important; }
+        .nouv-vide { font-size: 0.85em; color: var(--muted); padding: 6px 0; }
+        body.copain #nouvPanel { display: none !important; }
         .result-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
         .batch-add { width: auto !important; padding: 4px 10px !important; font-size: 0.8em !important; flex: none; margin: 0 !important; }
         .batch-hint { color: var(--muted); font-size: 0.82em; margin-bottom: 10px; }
@@ -2064,6 +2135,12 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                 <div class="lib-status ok" id="mfgBandeau" hidden style="margin-bottom:12px">
                     <span id="mfgBandeauTexte"></span><br>
                     <a id="mfgRetour" class="mfg-retour" hidden></a>
+                </div>
+                <!-- 🆕 Nouveautés : ajoutés dans Emby, pas encore de poster fait -->
+                <div class="section" id="nouvPanel" hidden>
+                    <h3>🆕 Nouveautés sans poster <span id="nouvCount"></span></h3>
+                    <div class="nouv-barre"><label for="nouvChoix">Remonter à</label><select id="nouvChoix" aria-label="Remonter à"></select></div>
+                    <div id="nouvListe"></div>
                 </div>
                 <!-- Recherche -->
                 <div class="section">
@@ -2338,7 +2415,8 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             <div class="lib-field" id="libSeasonRow">
                 <label for="libSeason">Numéro de saison <span style="font-weight:normal;color:var(--muted)">(vide = poster principal de la série, 0 = spéciaux)</span></label>
                 <input type="number" id="libSeason" min="0" max="99" inputmode="numeric" oninput="libState.touched = true; libInspect()" />
-                <label for="libEpisode" style="margin-top:8px">Numéro d'épisode <span style="font-weight:normal;color:var(--muted)">(vide = poster de la saison ; rempli = image de cet épisode, ex: saison 0 + épisode 100)</span></label>
+                <label for="libEpisode" style="margin-top:8px">Numéro d'épisode <span style="font-weight:normal;color:var(--muted)">(vide = poster de la saison ; rempli = image de cet épisode : choisis-le dans la liste ou tape son numéro)</span></label>
+                <select id="libEpisodeChoix" hidden style="margin-bottom:6px" aria-label="Choisir l’épisode" onchange="libChoixEpisode()"></select>
                 <input type="number" id="libEpisode" min="0" max="9999" inputmode="numeric" oninput="libInspect()" />
             </div>
 
@@ -2498,9 +2576,12 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             generatePreview(true);
         }, {passive: false});
 
-        async function search() {
+        // opts.choisir = {id, media_type} : ce titre est choisi tout seul s'il est dans les résultats (nouveautés, reprise)
+        async function search(opts) {
             const query = document.getElementById('searchQuery').value.trim();
-            if (!query) return;
+            if (!query) return null;
+            const choisir = opts && opts.choisir;
+            let choisi = null;
 
             document.getElementById('searchLoading').classList.add('show');
             document.getElementById('results').innerHTML = '';
@@ -2539,18 +2620,21 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                         const autre = !selectedItem || selectedItem.id !== item.id || selectedItem.media_type !== item.media_type;
                         selectedItem = item;
                         preremplirTitre(item.title, autre);
-                        loadPosters(item);
+                        div._chargement = loadPosters(item);
                         document.querySelectorAll('.result-item').forEach(el => el.classList.remove('active'));
                         div.classList.add('active');
                         resultsDiv.classList.add('collapsed');  // la liste se referme: seul le titre choisi reste affiché
                     });
 
                     resultsDiv.appendChild(div);
+                    if (choisir && !choisi && String(item.id) === String(choisir.id) && item.media_type === choisir.media_type) choisi = div;
                 });
                 proposerPosterLibre([query, (() => { try { return mfgVenue.serie || ''; } catch (e) { return ''; } })()], resultsDiv);
+                if (choisi) { choisi.click(); await choisi._chargement; return selectedItem; }
             } finally {
                 document.getElementById('searchLoading').classList.remove('show');
             }
+            return null;
         }
 
         let allPosters = [];
@@ -3269,9 +3353,108 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             const base = local ? (a.url || a.url_externe) : (a.url_externe || a.url);
             if (!base) return;
             document.getElementById('genTexte').textContent = '« ' + titre + ' » n’a pas encore de générique dans la médiathèque. MouFlopening peut le trouver : il s’ouvre directement sur ce titre et lance la recherche.';
-            document.getElementById('genOuvrir').href = base.replace(/\/$/, '') + '/?dossier=' + encodeURIComponent(dossier) + '&retour=' + encodeURIComponent(location.origin + location.pathname);
+            const ouvrir = document.getElementById('genOuvrir');
+            ouvrir.href = base.replace(/\/$/, '') + '/?dossier=' + encodeURIComponent(dossier) + '&retour=' + encodeURIComponent(location.origin + location.pathname + '?reprise=1');
+            ouvrir.onclick = garderFiche;
             document.getElementById('genModal').classList.add('show');
         }
+        // Retour de MouFlopening : la fiche revient telle qu'elle était (recherche, titre, affiche, textes, saison)
+        function garderFiche() {
+            if (!selectedItem) return;
+            try {
+                localStorage.setItem('mfReprise', JSON.stringify({t: Date.now(), q: document.getElementById('searchQuery').value,
+                    item: selectedItem, layout: captureLayout()}));
+            } catch (e) {}
+        }
+        async function reprendreFiche() {
+            let f = null;
+            try { f = JSON.parse(localStorage.getItem('mfReprise') || 'null'); localStorage.removeItem('mfReprise'); } catch (e) {}
+            history.replaceState(null, '', location.pathname);
+            if (!f || !f.item || Date.now() - (f.t || 0) > 24 * 3600 * 1000) return;
+            document.getElementById('searchQuery').value = f.q || f.item.title || '';
+            if (!f.item.libre) await search({choisir: f.item});
+            if (!selectedItem || selectedItem.id !== f.item.id) {           // titre absent des résultats : on le reprend quand même
+                selectedItem = f.item;
+                if (!f.item.libre) await loadPosters(f.item);
+            }
+            if (f.layout) applyLayout(f.layout);
+            showMessage('↩ Fiche de « ' + f.item.title + ' » reprise : tu peux enchaîner (saisons…)', 'success');
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            if (new URLSearchParams(location.search).get('reprise') === '1') reprendreFiche();
+        });
+
+        // ===== 🆕 Nouveautés : ajoutés dans Emby, pas encore de poster fait =====
+        let nouvElements = [], nouvTout = false;
+        async function nouvInit() {
+            let r = {};
+            try { const res = await fetch('/api/settings/nouveautes'); if (!res.ok) return; r = await res.json(); } catch (e) { return; }
+            const sel = document.getElementById('nouvChoix');
+            const debut = r.debut ? new Date(r.debut).toLocaleDateString('fr-FR') : '';
+            (r.choix || []).forEach(c => { const o = document.createElement('option'); o.value = c.valeur; o.textContent = c.libelle + (c.valeur === 'debut' && debut ? ' (' + debut + ')' : ''); sel.appendChild(o); });
+            sel.value = r.defaut;                         // choix par défaut : ⚙️ Réglages ; le menu change seulement l'affichage du moment
+            sel.addEventListener('change', () => { nouvTout = false; nouvCharger(); });
+            document.getElementById('nouvPanel').hidden = false;
+            nouvCharger();
+        }
+        async function nouvCharger() {
+            const liste = document.getElementById('nouvListe'), sel = document.getElementById('nouvChoix');
+            if (document.getElementById('nouvPanel').hidden) return;
+            if (!nouvElements.length) liste.innerHTML = '<div class="nouv-vide">Lecture d’Emby…</div>';
+            let r = {};
+            try { r = await (await fetch('/api/nouveautes?choix=' + encodeURIComponent(sel.value))).json(); } catch (e) { r = {error: 'Serveur injoignable'}; }
+            nouvElements = r.elements || [];
+            document.getElementById('nouvCount').textContent = nouvElements.length ? '(' + (r.total || nouvElements.length) + ')' : '';
+            if (r.error) { liste.innerHTML = ''; const d = document.createElement('div'); d.className = 'nouv-vide'; d.textContent = '⚠️ ' + r.error; liste.appendChild(d); return; }
+            nouvAfficher();
+        }
+        function nouvAfficher() {
+            const liste = document.getElementById('nouvListe');
+            liste.innerHTML = '';
+            if (!nouvElements.length) { liste.innerHTML = '<div class="nouv-vide">Rien à faire : tous les nouveaux titres ont leur poster 🎉</div>'; return; }
+            const max = nouvTout ? nouvElements.length : 5;
+            nouvElements.slice(0, max).forEach(el => {
+                const row = document.createElement('div'); row.className = 'nouv-item';
+                const nom = document.createElement('div'); nom.className = 'nouv-nom';
+                nom.textContent = el.titre + (el.annee && el.annee !== '?' ? ' (' + el.annee + ')' : '') + ' ';
+                const pt = document.createElement('small'); pt.textContent = (el.media_type === 'tv' ? '· série · ' : '· film · ') + el.rel.split('/')[0]; nom.appendChild(pt);
+                const act = document.createElement('div'); act.className = 'nouv-act';
+                const bouton = (txt, fn, cls) => { const b = document.createElement('button'); b.type = 'button'; b.textContent = txt; if (cls) b.className = cls; b.onclick = fn; act.appendChild(b); };
+                if (el.poster) bouton('🖼️ Poster', () => nouvOuvrir(el, null));
+                el.saisons.forEach(n => bouton(n === 0 ? 'Spéciaux' : 'Saison ' + n, () => nouvOuvrir(el, n)));
+                bouton('✓ Déjà bon', () => nouvDejaBon(el), 'secondary');
+                row.append(nom, act); liste.appendChild(row);
+            });
+            if (nouvElements.length > max) {
+                const b = document.createElement('button'); b.type = 'button'; b.className = 'secondary'; b.style.marginTop = '8px';
+                b.textContent = 'Voir les ' + (nouvElements.length - max) + ' autres';
+                b.onclick = () => { nouvTout = true; nouvAfficher(); };
+                liste.appendChild(b);
+            }
+        }
+        async function nouvOuvrir(el, saison) {
+            document.getElementById('searchQuery').value = el.titre;
+            const item = await search({choisir: el.tmdb ? {id: el.tmdb, media_type: el.media_type} : null});
+            const sp = document.getElementById('seasonSpecial'), en = document.getElementById('seasonEnabled'), s = document.getElementById('season');
+            if (saison === null) { sp.checked = false; en.checked = false; }
+            else if (saison === 0) { sp.checked = true; en.checked = true; }
+            else { sp.checked = false; en.checked = true; s.value = String(saison); }
+            s.disabled = !en.checked || sp.checked;
+            if (item) generatePreview();
+            else showMessage('Choisis le bon titre dans la liste de recherche', 'error');
+            document.getElementById(item ? 'posters' : 'results').scrollIntoView({behavior: 'smooth', block: 'start'});
+        }
+        async function nouvDejaBon(el) {
+            if (!confirm('Ne plus proposer « ' + el.titre + ' » dans les nouveautés ?')) return;
+            try {
+                await fetch('/api/nouveautes/deja-bon', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({rel: el.rel, poster: el.poster, saisons: el.saisons})});
+            } catch (e) {}
+            nouvElements = nouvElements.filter(x => x !== el);
+            document.getElementById('nouvCount').textContent = nouvElements.length ? '(' + nouvElements.length + ')' : '';
+            nouvAfficher();
+        }
+        document.addEventListener('DOMContentLoaded', nouvInit);
         function closeMouflanga() {
             document.getElementById('mfgModal').classList.remove('show');
             document.body.style.overflow = '';
@@ -3342,6 +3525,37 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             return document.getElementById('libSeason').value;
         }
 
+        // Liste des épisodes de la saison (spéciaux : souvent des films) : on choisit par le nom, pas par le numéro
+        let libEpisodesCle = '';
+        const plier = t => (t || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        async function libChargerEpisodes(rel) {
+            const sel = document.getElementById('libEpisodeChoix'), saison = libType() === 'tv' ? libSeasonText().trim() : '';
+            const cle = rel + '|' + saison;
+            if (cle === libEpisodesCle) return false;
+            libEpisodesCle = cle;
+            sel.innerHTML = ''; sel.hidden = true;
+            if (!rel || saison === '') return false;
+            let data = {};
+            try { data = await (await fetch('/api/library/episodes', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({rel, season_text: saison})})).json(); } catch (e) { return false; }
+            const eps = data.episodes || [];
+            if (libEpisodesCle !== cle || !eps.length) return false;
+            const o0 = document.createElement('option'); o0.value = ''; o0.textContent = saison === '0' ? '— Poster des spéciaux (pas un épisode) —' : '— Poster de la saison (pas un épisode) —'; sel.appendChild(o0);
+            eps.forEach(e => { const o = document.createElement('option'); o.value = e.episode; o.textContent = 'Épisode ' + e.episode + (e.titre ? ' – ' + e.titre : '') + (e.thumb ? '  🖼️' : ''); sel.appendChild(o); });
+            sel.hidden = false;
+            const ep = document.getElementById('libEpisode');
+            if (ep.value === '' && saison === '0' && selectedItem && selectedItem.media_type === 'movie') {      // un film → le spécial du même nom
+                const t = [selectedItem.title, selectedItem.original_title].map(plier).filter(Boolean);
+                const hit = eps.find(e => { const n = plier(e.titre); return n && t.some(x => x === n || (x.length >= 6 && (n.includes(x) || x.includes(n)))); });
+                if (hit) { ep.value = hit.episode; sel.value = String(hit.episode); return true; }
+            }
+            sel.value = ep.value;
+            return false;
+        }
+        function libChoixEpisode() {
+            document.getElementById('libEpisode').value = document.getElementById('libEpisodeChoix').value;
+            libInspect();
+        }
+
         function libSetStatus(msg, kind) {
             const el = document.getElementById('libStatus');
             el.textContent = msg;
@@ -3372,11 +3586,13 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                 item.title + (item.year && item.year !== '?' ? ' (' + item.year + ')' : '') + (isTv ? ' · série' : ' · film');
             document.getElementById('libSeasonRow').style.display = isTv ? 'block' : 'none';
 
-            const seasonTxt = document.getElementById('seasonSpecial').checked ? '0' : (document.getElementById('seasonEnabled').checked ? document.getElementById('season').value : '');
+            // un film n'a pas de saison : seulement « spéciaux » s'il va dans une série (sinon reste d'une série faite juste avant)
+            const seasonTxt = document.getElementById('seasonSpecial').checked ? '0' : (!isTv ? '' : (document.getElementById('seasonEnabled').checked ? document.getElementById('season').value : ''));
             const m = seasonTxt.match(/[0-9]+/);
             document.getElementById('libSeason').value = m ? m[0] : '';
             document.getElementById('libSearch').value = '';
             document.getElementById('libEpisode').value = '';
+            libEpisodesCle = ''; document.getElementById('libEpisodeChoix').innerHTML = ''; document.getElementById('libEpisodeChoix').hidden = true;
             document.getElementById('libNewImg').src = '/api/download/' + encodeURIComponent(savedFilename) + '?inline=1&t=' + Date.now();
             document.getElementById('libActions').innerHTML = '';
             document.getElementById('libOldFrame').innerHTML = '';
@@ -3416,7 +3632,10 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                 } else {
                     libSetStatus('⚠️ Aucun dossier trouvé : cherche-le avec le champ ci-dessous.', 'warn');
                 }
-                if (has) libRender(data.target_name, data.inspect); else libRender('', null);
+                if (has) {
+                    libRender(data.target_name, data.inspect);
+                    if (await libChargerEpisodes(document.getElementById('libFolder').value)) libInspect();   // spécial trouvé pour ce film
+                } else libRender('', null);
             } catch (err) {
                 libSetStatus('❌ ' + err.message, 'err');
             }
@@ -3465,6 +3684,9 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             libSyncType();
             const rel = document.getElementById('libFolder').value;
             if (!rel) { libRender('', null); return; }
+            await libChargerEpisodes(rel);
+            const choix = document.getElementById('libEpisodeChoix');
+            if (!choix.hidden) choix.value = [...choix.options].some(o => o.value === document.getElementById('libEpisode').value) ? document.getElementById('libEpisode').value : '';
             const res = await fetch('/api/library/inspect', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -3603,6 +3825,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                 }
                 showMessage(msg, kind);
                 if (data.generique === false) proposerGenerique(selectedItem.title, data.dossier);
+                nouvCharger();
             } catch (err) {
                 libSetStatus('❌ ' + err.message, 'err');
                 document.querySelectorAll('#libActions button').forEach(b => b.disabled = false);
