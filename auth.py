@@ -173,6 +173,10 @@ LOGIN_HTML = """<!DOCTYPE html>
             <input type="password" id="password" name="password" autocomplete="new-password" required minlength="8">
             <label for="password2">Mot de passe, encore une fois</label>
             <input type="password" id="password2" name="password2" autocomplete="new-password" required minlength="8">
+            <div class="remember">
+                <input type="checkbox" id="voirMdp2" onchange="var t = this.checked ? 'text' : 'password'; document.getElementById('password').type = t; document.getElementById('password2').type = t">
+                <label for="voirMdp2" style="margin:0">Afficher le mot de passe</label>
+            </div>
             <button type="submit">Créer mon identifiant</button>
         </form>
     {% elif not configured %}
@@ -190,6 +194,10 @@ LOGIN_HTML = """<!DOCTYPE html>
             <input type="text" id="username" name="username" autocomplete="username" autocapitalize="off" autocorrect="off" spellcheck="false" required autofocus value="{{ username }}">
             <label for="password">Mot de passe</label>
             <input type="password" id="password" name="password" autocomplete="current-password" required>
+            <div class="remember">
+                <input type="checkbox" id="voirMdp" onchange="document.getElementById('password').type = this.checked ? 'text' : 'password'">
+                <label for="voirMdp" style="margin:0">Afficher le mot de passe</label>
+            </div>
             <div class="remember">
                 <input type="checkbox" id="remember" name="remember" value="1" checked>
                 <label for="remember" style="margin:0">Rester connecté {{ days }} jours</label>
