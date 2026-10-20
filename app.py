@@ -2018,9 +2018,9 @@ HTML_TEMPLATE = """
         .cadre-reglage input[type=range] { width: 100%; }
         .cadre-presets { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
         .cadre-presets button { width: auto; padding: 6px 10px; font-size: 13px; }
-        #depotVoile { position: fixed; inset: 0; z-index: 9999; background: rgba(82,181,75,.25); border: 4px dashed #52b54b; display: flex; align-items: center; justify-content: center; font-size: 1.6em; font-weight: 700; color: #fff; text-shadow: 0 2px 6px #000; pointer-events: none; }
+        #depotVoile { position: fixed; inset: 0; z-index: 9999; background: color-mix(in srgb, var(--accent) 25%, transparent); border: 4px dashed var(--accent); display: flex; align-items: center; justify-content: center; font-size: 1.6em; font-weight: 700; color: #fff; text-shadow: 0 2px 6px #000; pointer-events: none; }
         #depotVoile[hidden] { display: none; }
-        .mfg-retour { display: inline-block; margin-top: 8px; padding: 6px 12px; border-radius: 6px; background: #52b54b; color: #fff; text-decoration: none; font-weight: 600; }
+        .mfg-retour { display: inline-block; margin-top: 8px; padding: 6px 12px; border-radius: 6px; background: var(--accent); color: #fff; text-decoration: none; font-weight: 600; }
         .mfg-retour[hidden], #mfgBandeau[hidden] { display: none; }
         .lib-compare figcaption { font-size: 0.8em; color: #555; margin-top: 6px; line-height: 1.35; }
         .lib-compare figcaption b { color: #222; }

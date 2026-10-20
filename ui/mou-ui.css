@@ -137,3 +137,4 @@ body.mou-login { display:flex; align-items:center; justify-content:center; paddi
 .mou-modal .mou-box.narrow { height:auto !important; }
 .mou-modal .mou-box > .mou-actions-row { position:sticky; bottom:-18px; z-index:5; background:var(--card); padding:12px 0 6px; margin-top:12px; border-top:1px solid var(--line); }
 .mou-logo { width:40px; height:40px; flex:none; display:block; border-radius:10px; }
+a.mou-btn, a.btn { text-decoration:none; }
