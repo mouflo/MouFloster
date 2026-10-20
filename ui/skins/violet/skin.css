@@ -1,0 +1,18 @@
+/* Skin « Violet cinéma » : bleu nuit, accent violet, touches de cyan. */
+:root, :root[data-theme] {
+    color-scheme: dark;
+    --bg:#0b0d14; --card:#151926; --surface:#151926; --surface2:#1b2033; --field:#1b2033; --line:#262c42;
+    --text:#eef0f8; --text2:#c6cbe0; --muted:#9aa2bd;
+    --accent:#7c5cff; --accent-hover:#8f74ff;
+    --fg:#eef0f8; --box-bg:#151926; --box-border:#262c42; --input-bg:#1b2033; --input-fg:#eef0f8; --input-border:#262c42;
+    --thumb-border:#262c42; --log-bg:#080a10;
+}
+body { background-image: radial-gradient(900px 400px at 85% -10%, rgba(124,92,255,.18), transparent), radial-gradient(700px 380px at -5% 0%, rgba(34,211,238,.10), transparent); background-repeat:no-repeat; }
+.mou-title .g { background:linear-gradient(90deg,#7c5cff,#22d3ee); -webkit-background-clip:text; background-clip:text; color:transparent; }
+.mou-header, .mou-panel, .panel { border:1px solid var(--line); border-radius:14px; }
+.mou-btn:not(.ghost):not(.danger):not(.warn), body.mou-skin .btn:not(.ghost) { background:linear-gradient(135deg,#7c5cff,#5b8cff); box-shadow:0 6px 18px rgba(124,92,255,.32); }
+.mou-btn:not(.ghost):not(.danger):not(.warn):hover { filter:brightness(1.1); }
+.mf-card, .mf-help, .mf-hint, .mf-step, .mf-part, .mf-say, .mf-issue { border-radius:14px; }
+.mf-card:hover { box-shadow:0 10px 30px rgba(0,0,0,.35); border-color:color-mix(in srgb, var(--accent) 45%, var(--line)); }
+.mf-help { background:linear-gradient(135deg, rgba(124,92,255,.16), rgba(34,211,238,.08)); }
+.mf-n { background:linear-gradient(135deg,#7c5cff,#5b8cff); }

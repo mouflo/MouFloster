@@ -1,0 +1,16 @@
+/* 🎨 Fenêtre « Apparence » . Utilise les variables du style commun, donc suit les skins. */
+.app-liste { display:flex; flex-direction:column; gap:6px; max-height:38vh; overflow:auto; margin:10px 0; }
+.app-skin { display:block; padding:10px 12px; border:1px solid var(--line); border-radius:6px; background:var(--field); cursor:pointer; }
+.app-skin small { display:block; color:var(--muted); margin:2px 0 0 26px; }
+.app-skin input { margin-right:8px; }
+.app-tag { font-size:.7rem; padding:1px 6px; border-radius:8px; background:var(--warn); color:#1a1a1a; }
+.app-cols { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.app-col { display:flex; flex-direction:column; gap:4px; font-size:.85rem; color:var(--text2); }
+.app-col input[type=color] { width:100%; height:42px; padding:2px; border:1px solid var(--line); border-radius:4px; background:var(--field); }
+@media (max-width:480px) { .app-cols { grid-template-columns:1fr; } }
+
+/* La fenêtre défile (téléphone : le contenu dépasse l'écran) et la rangée Enregistrer reste visible en bas. */
+#appModal .mou-box { overflow-y:auto; -webkit-overflow-scrolling:touch; }
+#appModal .app-liste { max-height:30vh; }
+#appModal .app-barre { position:sticky; bottom:-18px; z-index:2; background:var(--card); padding:12px 0 8px; margin-top:12px; border-top:1px solid var(--line); }
+@media (max-width:800px) { #appModal .app-barre .mou-btn { white-space:normal; } }

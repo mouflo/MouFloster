@@ -8,12 +8,15 @@
 <link rel="icon" type="image/svg+xml" href="/icons/moufloster.svg"><link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png"><link rel="apple-touch-icon" href="/icons/apple-touch-icon.png"><link rel="manifest" href="/icons/manifest.webmanifest"><meta name="theme-color" content="#121315">
 <link rel="stylesheet" href="/ui/mou-ui.css?v={{ version|urlencode }}">
 <script src="/ui/mou-ui.js?v={{ version|urlencode }}" defer></script>
+<link rel="stylesheet" href="/ui/apparence.css?v={{ version|urlencode }}">
+<script src="/ui/apparence.js?v={{ version|urlencode }}" defer></script>
 <link rel="stylesheet" href="/ui/mou-settings.css?v={{ version|urlencode }}">
 <script src="/ui/mou-settings.js?v={{ version|urlencode }}"></script>
 <style>
 .usr-liste { margin:6px 0 10px; } .usr { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:6px; padding:8px 0; border-bottom:1px solid var(--line, #333); }
 .usr.off { opacity:.6; } .usr-nom { font-weight:600; display:flex; flex-direction:column; } .usr-nom small { font-weight:400; color:var(--muted, #999); font-size:.78rem; } .usr-act { display:flex; gap:6px; }
 </style>
+<link rel="stylesheet" href="{{ skin_url(request.args.get('skin') == 'off') }}">
 </head>
 <body>
 <div class="container">

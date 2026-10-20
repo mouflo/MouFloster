@@ -85,12 +85,15 @@ app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
 
 import auth
 auth.init_app(app, APP_VERSION)  # page de connexion + protection de toutes les routes
+import apparence
+apparence.init_app(app)     # skins et couleurs au choix, par compte
 import comptes   # 👥 comptes « copain » : créateur de posters, envoi vers LEUR Emby (jamais la médiathèque de l'admin)
 comptes.init_app(app, auth, Path(__file__).parent / "data")
 auth.COPAIN_OK = {("GET", "/"), ("POST", "/api/search"), ("POST", "/api/posters"), ("POST", "/api/upload"), ("POST", "/api/erase"),
                   ("POST", "/api/preview"), ("POST", "/api/decoupe"), ("POST", "/api/save"), ("GET", "/api/layout"), ("POST", "/api/clientlog"), ("GET", "/api/moi"),
                   ("POST", "/api/copain/profil"), ("POST", "/api/copain/envoyer"), ("POST", "/api/copain/existant")}
 auth.COPAIN_PREFIXES = (("GET", "/api/upload/"), ("GET", "/api/download/"), ("GET", "/api/copain/existant/"))
+auth.COPAIN_OK |= {("GET", "/skin.css"), ("GET", "/api/apparence"), ("POST", "/api/apparence"), ("GET", "/apparence/reset")}
 
 # ============================================================================
 # CONFIG
@@ -1424,6 +1427,8 @@ HTML_TEMPLATE = """
 <link rel="icon" type="image/svg+xml" href="/icons/moufloster.svg"><link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png"><link rel="apple-touch-icon" href="/icons/apple-touch-icon.png"><link rel="manifest" href="/icons/manifest.webmanifest"><meta name="theme-color" content="#121315">
     <link rel="stylesheet" href="/ui/mou-ui.css?v={{ version|urlencode }}">
     <script src="/ui/mou-ui.js?v={{ version|urlencode }}" defer></script>
+<link rel="stylesheet" href="/ui/apparence.css?v={{ version|urlencode }}">
+<script src="/ui/apparence.js?v={{ version|urlencode }}" defer></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -2134,6 +2139,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
 .copain-existant .act { display:flex; flex-direction:column; gap:6px; }
 .copain-existant button, .copain-existant a { width:auto; padding:6px 10px; font-size:13px; }
 </style>
+<link rel="stylesheet" href="{{ skin_url(request.args.get('skin') == 'off') }}">
 </head>
 <body>
     <div class="container">

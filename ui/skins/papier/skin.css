@@ -1,0 +1,13 @@
+/* Skin « Papier » : exemple à copier pour créer le tien (voir docs/SKINS.md).
+   Principe : on redéfinit les variables du style commun ; on ne touche aux classes que pour les détails. */
+:root, :root[data-theme] {
+    color-scheme: light;
+    --bg:#f3ecdf; --card:#fffaf0; --surface:#fffaf0; --surface2:#f1e8d6; --field:#efe5d2; --line:#d9ccb2;
+    --text:#2b2418; --text2:#4a3f2c; --muted:#7a6c52;
+    --accent:#b5532a; --accent-hover:#c9623a;
+    --fg:#2b2418; --box-bg:#fffaf0; --box-border:#d9ccb2; --input-bg:#efe5d2; --input-fg:#2b2418; --input-border:#d9ccb2;
+    --thumb-border:#d9ccb2;
+}
+.mou-title .w { color: var(--text); }
+.mou-header, .mou-panel { box-shadow: 0 1px 0 var(--line); }
+::-webkit-scrollbar-thumb { background: var(--line); }

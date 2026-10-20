@@ -25,6 +25,34 @@
   function close(m) { m.classList.remove('show'); if (!document.querySelector('.mou-modal.show')) document.body.style.overflow = ''; }
   window.MouModalOpen = function () { return !!document.querySelector('.mou-modal.show'); };
 
+  // ----- Logo aux couleurs du skin : l'image de l'en-tête ne voit pas les variables du skin, on la remplace par le même dessin intégré à la page -----
+  var COULEURS_LOGO = {'#2a2d31': 'var(--card)', '#121315': 'var(--bg)', '#8be083': 'var(--accent-hover)', '#52b54b': 'var(--accent)', '#f3f3f3': 'var(--text)', '#ffffff': 'var(--text)'};
+  function recolorerLogo(img) {
+    var src = img && img.getAttribute('src');
+    if (!src || !/\.svg(\?|$)/.test(src)) return;
+    fetch(src).then(function (r) { return r.ok ? r.text() : Promise.reject(); }).then(function (txt) {
+      var doc = new DOMParser().parseFromString(txt, 'image/svg+xml'), svg = doc.documentElement;
+      if (!svg || svg.nodeName !== 'svg' || doc.querySelector('parsererror')) return;
+      svg.querySelectorAll('*').forEach(function (el) {
+        ['fill', 'stroke', 'stop-color'].forEach(function (att) {
+          var v = (el.getAttribute(att) || '').toLowerCase();
+          if (COULEURS_LOGO[v]) { el.style.setProperty(att, COULEURS_LOGO[v]); el.removeAttribute(att); }
+        });
+      });
+      svg.removeAttribute('width'); svg.removeAttribute('height');
+      svg.setAttribute('class', 'mou-logo'); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', img.getAttribute('alt') || 'Logo');
+      img.replaceWith(document.importNode(svg, true));
+      iconeOnglet(txt);
+    }).catch(function () {});
+  }
+  function iconeOnglet(txt) {
+    var cs = getComputedStyle(document.documentElement), c = function (n, d) { return cs.getPropertyValue(n).trim() || d; };
+    var table = {'#2a2d31': c('--card', '#2a2d31'), '#121315': c('--bg', '#121315'), '#8be083': c('--accent-hover', '#8be083'), '#52b54b': c('--accent', '#52b54b'), '#f3f3f3': c('--text', '#f3f3f3'), '#ffffff': c('--text', '#ffffff')};
+    var svg = txt.replace(/#[0-9a-fA-F]{6}/g, function (h) { return table[h.toLowerCase()] || h; });
+    var lien = document.querySelector('link[rel="icon"][type="image/svg+xml"]');
+    if (lien) lien.setAttribute('href', 'data:image/svg+xml,' + encodeURIComponent(svg));
+  }
+
   function build(host) {
     var d = host.dataset, app = d.app || 'mouflopening';
     var actions = []; try { actions = JSON.parse(d.actions || '[]'); } catch (e) {}
@@ -40,6 +68,7 @@
       '<h1 class="mou-title"><a class="mou-accueil" href="/" title="Page principale"><img src="/icons/' + esc(app) + '.svg" alt=""><span><span class="w">' + esc(d.prefix || 'MouFl') + '</span><span class="g">' + esc(d.rest || '') + '</span></span></a></h1>' +
       (d.sub ? '<p class="mou-sub">' + esc(d.sub) + '</p>' : '');
     host.replaceWith(header);
+    recolorerLogo(header.querySelector('.mou-title img'));
 
     // ----- Journal -----
     var extra = actions.map(function (a, i) { return '<button class="mou-btn ghost" data-extra="' + i + '">' + esc(a.label) + '</button>'; }).join('');
@@ -166,4 +195,28 @@
 
   function init() { var host = $('mou-header'); if (host) build(host); surveiller(); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+
+// Touche « retour » du téléphone : ferme la fenêtre ouverte au lieu de quitter l'appli
+(function () {
+  var empile = 0, ignore = 0;
+  function ouvertes() { return document.querySelectorAll('.mou-modal.show'); }
+  function sync() {
+    var n = ouvertes().length;
+    while (empile < n) { history.pushState({mou: 1}, ''); empile++; }
+    if (empile > n) { var k = empile - n; empile = n; ignore++; history.go(-k); }
+  }
+  window.addEventListener('popstate', function () {
+    if (ignore) { ignore--; return; }
+    var liste = ouvertes();
+    if (!empile || !liste.length) return;
+    empile--;
+    var m = liste[liste.length - 1];
+    var ferme = [].slice.call(m.querySelectorAll('.mou-actions-row button')).filter(function (b) { return /^\s*(Fermer|Annuler|Close)\s*$/i.test(b.textContent); })[0];
+    if (m.id === 'mfJob') m.classList.remove('show');
+    else if (ferme) ferme.click();
+    else m.classList.remove('show');
+    if (!document.querySelector('.mou-modal.show')) document.body.style.overflow = '';
+  });
+  new MutationObserver(sync).observe(document.body, {childList: true, subtree: true, attributes: true, attributeFilter: ['class']});
 })();

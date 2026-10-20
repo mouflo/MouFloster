@@ -1,0 +1,12 @@
+/* Skin « Océan » : bleus profonds, accent turquoise. */
+:root, :root[data-theme] {
+    color-scheme: dark;
+    --bg:#08141c; --card:#0f2230; --surface:#0f2230; --surface2:#143044; --field:#143044; --line:#1f4560;
+    --text:#e8f4fb; --text2:#c2dbe9; --muted:#8fb0c4;
+    --accent:#1fb5d6; --accent-hover:#3fc8e6;
+    --fg:#e8f4fb; --box-bg:#0f2230; --box-border:#1f4560; --input-bg:#143044; --input-fg:#e8f4fb; --input-border:#1f4560;
+    --thumb-border:#1f4560; --log-bg:#061018;
+}
+.mou-btn:not(.ghost):not(.danger):not(.warn), body.mou-skin .btn:not(.ghost) { color:#04222c; }
+.mou-header, .mou-panel, .panel { border:1px solid var(--line); }
+.mf-card { border-radius:12px; }
