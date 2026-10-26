@@ -29,15 +29,15 @@ reconstruction complète après une migration/panne, voir [`INSTALL.md`](INSTALL
 
 ![L'envoi vers la médiathèque : ancien et nouveau poster côte à côte](docs/screenshots/mediatheque.png)
 
-**La page ⚙️ Réglages : adresse et clé d'Emby, clé TheMovieDB, dossiers**
+**La page ⚙️ Réglages → Connexions : Emby, TheMovieDB, MouFlanga, Telegram, MouFlopening et les applis voisines**
 
-![La page Réglages : adresse et clé d'Emby, clé TheMovieDB, dossiers](docs/screenshots/reglages.png)
+![La page Réglages : Emby, TheMovieDB, MouFlanga, Telegram, MouFlopening, applis voisines](docs/screenshots/reglages.png)
 
 **Les anciens posters d'un emplacement, à restaurer d'un clic**
 
 ![Les anciens posters d'un emplacement](docs/screenshots/restaurer.png)
 
-**Sur téléphone**
+**Sur téléphone : recadrage au doigt seulement en mode ✋, curseurs à glisser de côté ou − / +**
 
 ![Sur téléphone](docs/screenshots/mobile.png)
 
@@ -63,8 +63,11 @@ Tes copains qui ont leur propre Emby peuvent utiliser le créateur de posters : 
 - 📖 **Couverture dans MouFlanga** : « 📚 Couverture dans MouFlanga » met le poster en couverture d'une série de la bibliothèque de mangas MouFlanga (sans Emby) ; la série est reconnue d'après le titre, l'ancienne couverture est sauvegardée dans `_anciens-posters/MouFlanga`. Depuis MouFlanga, « 🎨 Créer avec MouFloster » ouvre MouFloster avec la recherche faite et un bouton pour revenir
 - ✏️ **Image perso sans recherche** : pour un manga sans anime (pas d'affiche TheMovieDB), tape juste le nom puis « ⬆️ Envoyer mon image »
 - 📨 **Alertes Telegram** : redémarrage après un plantage ou une coupure du serveur, erreur pendant une action, mise à jour installée (cases à cocher dans ⚙️ Réglages ; réglages Telegram repris de MouFlanimeXer, sujet de groupe propre à MouFloster)
-- 🎵 **Générique manquant** : après l'envoi d'un poster, si le film ou la série n'a pas encore de générique, une fenêtre propose d'ouvrir MouFlopening directement sur ce titre (adresses dans ⚙️ Réglages → MouFlopening) ; en revenant de MouFlopening, la fiche est remise telle qu'elle était (recherche, titre, affiche, textes, saison) pour enchaîner sur les saisons
-- 🆕 **Nouveautés sans poster** : l'accueil liste les films, séries et nouvelles saisons ajoutés dans Emby qui n'ont pas encore de poster fait avec MouFloster ; un appui sur « 🖼️ Poster », « Saison 2 » ou « Spéciaux » lance la recherche, choisit le titre et règle la saison. Menu « Remonter à » (depuis la mise en route, 1 mois, 3 mois, 6 mois, 1 an, tout ; choix par défaut dans ⚙️ Réglages), bouton « ✓ Déjà bon » pour ne plus proposer un titre. Les posters envoyés avant la mise en route sont repris du journal de l'appli
+- 📱 **Pensé pour le téléphone** : en faisant défiler la page, on ne coche plus une case ni ne bouge un curseur par mégarde (un appui qui arrive pendant le défilement est ignoré, seul le texte d'une case est sensible au doigt) ; les curseurs ne bougent que si on les glisse de côté, avec des boutons − / + pour régler finement ; sur l'aperçu, un doigt fait défiler la page, le recadrage au doigt se fait en mode « ✋ Recadrer au doigt » (ou appui long sur l'image), deux doigts pour zoomer ; un petit aperçu reste collé en bas de l'écran pendant qu'on tape les textes (un appui y mène, « ↩ Retour aux réglages » ramène où l'on était). L'aperçu arrive en image légère : environ deux fois moins de données à chaque retouche
+- 🎵 **Générique cherché tout seul** : après l'envoi d'un poster, si le film ou la série n'a pas encore de générique, MouFlopening le cherche lui-même (thème validé par la communauté : ThemerrDB, AnimeThemes), sans quitter la page ; s'il ne trouve rien, une fenêtre propose de l'ouvrir directement sur ce titre, avec la raison. En revenant de MouFlopening, la fiche est remise telle qu'elle était (recherche, titre, affiche, textes, saison) pour enchaîner sur les saisons
+- 🖼️ **Ouvert depuis MouFlopening** : son bouton « 🖼️ Poster dans MouFloster » ouvre MouFloster sur le titre (et la saison) choisi, avec un lien pour revenir une fois le poster envoyé
+- 🔗 **Applis voisines** : sur le même serveur, MouFloster et MouFlopening se parlent directement (clé créée toute seule, rien à régler) ; ⚙️ Réglages → Connexions → « 📥 Reprendre les réglages de » copie Emby, TheMovieDB ou Telegram d'une autre appli MouFl au lieu de les retaper (les clés ne s'affichent jamais, seulement leurs 4 derniers caractères). Chaque nuit, le compte rendu Telegram de MouFlopening dit quels nouveaux titres d'Emby attendent encore leur poster
+- 🆕 **Nouveautés sans poster** : l'accueil liste les films, séries et nouvelles saisons ajoutés dans Emby qui n'ont pas encore de poster fait avec MouFloster ; un appui sur « 🖼️ Poster », « Saison 2 » ou « Spéciaux » lance la recherche, choisit le titre et règle la saison ; « 🎵 générique ✓ » ou un bouton « 🎵 Générique » (ouvre MouFlopening sur ce titre) dit si le générique est déjà là. Menu « Remonter à » (depuis la mise en route, 1 mois, 3 mois, 6 mois, 1 an, tout ; choix par défaut dans ⚙️ Réglages), bouton « ✓ Déjà bon » pour ne plus proposer un titre. Les posters envoyés avant la mise en route sont repris du journal de l'appli
 - 🎞️ **Couverture des épisodes spéciaux** : dans la fenêtre d'envoi, la saison choisie montre la liste de ses épisodes avec leur nom (« Épisode 12 – Blue Exorcist : Le film ») ; un film TheMovieDB rangé dans les spéciaux d'une série est reconnu tout seul (dossier de la série proposé, épisode du même nom choisi), l'image devient la vignette de cet épisode dans Emby
 - ⚙️ **Page Réglages** : adresse et clé d'Emby, clé TheMovieDB et dossiers se règlent depuis le navigateur (même page que dans MouFlopening et MouFlanimeXer)
 

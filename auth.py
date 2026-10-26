@@ -300,6 +300,8 @@ def init_app(app, version=""):
     def require_login():
         if request.path in ("/login", "/healthz", "/favicon.ico") or request.path.startswith(("/icons/", "/ui/")):
             return None
+        if request.path.startswith("/api/voisin/"):      # applis voisines : protégées par leur clé (voisins.py), pas par la connexion
+            return None
         rl = role()
         if rl == "admin":
             return None

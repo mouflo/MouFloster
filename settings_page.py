@@ -122,4 +122,8 @@ def init_app(app, base_dir, version_fn, get_dirs):
                 _write_secret(secrets, nom, url)
                 os.environ[nom] = url
             return jsonify({"ok": True, "message": "Adresses enregistrées." if any(adresses.values()) else "Adresses effacées : la proposition est désactivée."})
-        return jsonify({"url": os.getenv("MOUFLOPENING_URL", "").strip(), "url_externe": os.getenv("MOUFLOPENING_URL_EXTERNE", "").strip()})
+        import voisins
+        # « ici » : MouFlopening est installé sur ce serveur (adresse devinée : même machine, port 8001, si rien n'est réglé)
+        return jsonify({"url": os.getenv("MOUFLOPENING_URL", "").strip(), "url_externe": os.getenv("MOUFLOPENING_URL_EXTERNE", "").strip(),
+                        "ici": voisins.dossier("mouflopening") is not None, "port": voisins.APPLIS["mouflopening"][1],
+                        "reliee": voisins.disponible("mouflopening")})

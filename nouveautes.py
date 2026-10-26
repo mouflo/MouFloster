@@ -133,15 +133,12 @@ def _annee(item):
     return str(a) if a else "?"
 
 
-def lister(choix=None, limite=60):
-    """Éléments à faire, du plus récent au plus ancien : [{rel, titre, media_type, tmdb, annee, date, poster, saisons}]"""
-    data = _etat()
-    if choix not in CHOIX:
-        choix = data.get("defaut") if data.get("defaut") in CHOIX else "debut"
-    faits = set((data.get("faits") or {}).keys()) | set(library.load_map().values())
+def _groupes(mini, faits, tous=False):
+    """Titres ajoutés dans Emby depuis « mini » (ISO, ou None = tout), regroupés par dossier :
+    {rel: {rel, titre, media_type, tmdb, annee, date, poster (à faire), saisons (à faire), saisons_faites}}.
+    tous=False : seulement ce qui reste à faire (poster du titre ou d'une saison)."""
     params = {"Recursive": "true", "IncludeItemTypes": "Movie,Series,Season", "SortBy": "DateCreated",
               "SortOrder": "Descending", "Fields": "Path,ProviderIds,DateCreated,ProductionYear", "Limit": 400}
-    mini = _date_min(choix, data["debut"])
     if mini:
         params["MinDateCreated"] = mini
     items = emby._request("GET", "/Items", params=params).json().get("Items", [])
@@ -154,18 +151,20 @@ def lister(choix=None, limite=60):
             rel = library.rel_depuis_emby(it.get("Path"), mt)
             if not rel:
                 continue
-            g = groupes.setdefault(rel, {"rel": rel, "saisons": [], "poster": False, "date": it.get("DateCreated", "")})
-            g.update(titre=it.get("Name") or rel.partition("/")[2], media_type=mt, tmdb=emby._tmdb_of(it), annee=_annee(it))
+            g = groupes.setdefault(rel, {"rel": rel, "saisons": [], "saisons_faites": [], "poster": False, "date": it.get("DateCreated", "")})
+            g.update(titre=it.get("Name") or rel.partition("/")[2], media_type=mt, tmdb=emby._tmdb_of(it), annee=_annee(it), nouveau=True)
             if rel not in faits:
                 g["poster"] = True
         elif genre == "Season" and it.get("Path") and it.get("IndexNumber") is not None:
             rel = library.rel_depuis_emby(str(Path(it["Path"]).parent), "tv")
             n = int(it["IndexNumber"])
-            if not rel or cle(rel, n) in faits:
+            fait = cle(rel, n) in faits if rel else True
+            if not rel or (fait and not tous):
                 continue
-            g = groupes.setdefault(rel, {"rel": rel, "saisons": [], "poster": False, "date": it.get("DateCreated", "")})
-            if n not in g["saisons"]:
-                g["saisons"].append(n)
+            g = groupes.setdefault(rel, {"rel": rel, "saisons": [], "saisons_faites": [], "poster": False, "date": it.get("DateCreated", "")})
+            liste = g["saisons_faites"] if fait else g["saisons"]
+            if n not in liste:
+                liste.append(n)
             g.setdefault("titre", it.get("SeriesName") or rel.partition("/")[2])
             g.setdefault("media_type", "tv")
             if "tmdb" not in g and it.get("SeriesId"):
@@ -181,14 +180,34 @@ def lister(choix=None, limite=60):
                     g.setdefault("tmdb", emby._tmdb_of(s))
                     g.setdefault("annee", _annee(s))
                     g["titre"] = s.get("Name") or g["titre"]
-
-    resultat = []
     for g in groupes.values():
-        if not g["poster"] and not g["saisons"]:
-            continue
         g["saisons"].sort()
+        g["saisons_faites"].sort()
         g.setdefault("tmdb", None)
         g.setdefault("annee", "?")
-        resultat.append(g)
+        g.setdefault("nouveau", False)
+    return groupes
+
+
+def lister(choix=None, limite=60):
+    """Éléments à faire, du plus récent au plus ancien : [{rel, titre, media_type, tmdb, annee, date, poster, saisons}]"""
+    data = _etat()
+    if choix not in CHOIX:
+        choix = data.get("defaut") if data.get("defaut") in CHOIX else "debut"
+    faits = set((data.get("faits") or {}).keys()) | set(library.load_map().values())
+    groupes = _groupes(_date_min(choix, data["debut"]), faits)
+    resultat = [g for g in groupes.values() if g["poster"] or g["saisons"]]
     resultat.sort(key=lambda g: g["date"], reverse=True)
     return {"choix": choix, "debut": data["debut"], "elements": resultat[:limite], "total": len(resultat)}
+
+
+def arrivees(depuis, limite=100):
+    """Tout ce qui est arrivé dans Emby depuis « depuis » (ISO), fait ou non : pour le compte rendu de la nuit de
+    MouFlopening. Chaque élément porte son dossier complet (pour vérifier son générique)."""
+    data = _etat()
+    faits = set((data.get("faits") or {}).keys()) | set(library.load_map().values())
+    resultat = sorted(_groupes(depuis, faits, tous=True).values(), key=lambda g: g["date"], reverse=True)[:limite]
+    for g in resultat:
+        d = library.resolve_folder(g["rel"])
+        g["dossier"] = str(d) if d else ""
+    return resultat

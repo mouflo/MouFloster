@@ -88,6 +88,23 @@ class NouveautesTest(unittest.TestCase):
             self.assertEqual([e["rel"] for e in r["elements"]], ["Manga/Blue Exorcist"])
             self.assertNotIn("MinDateCreated", appels[-2])
 
+    def test_arrivees_pour_le_compte_rendu_de_mouflopening(self):
+        m = str(self.media)
+        items = {"Items": [
+            {"Type": "Series", "Name": "Below", "Path": m + "/Series/Below", "ProviderIds": {"Tmdb": "1"}, "DateCreated": "2026-10-15"},
+            {"Type": "Season", "IndexNumber": 1, "SeriesId": "be", "SeriesName": "Blue Exorcist", "Path": m + "/Manga/Blue Exorcist/s1", "DateCreated": "2026-10-14"},
+            {"Type": "Movie", "Name": "Film", "Path": m + "/Films 4k/Film (2026)/f.mkv", "ProviderIds": {"Tmdb": "9"}, "DateCreated": "2026-10-12"},
+        ]}
+        series = {"Items": [{"Id": "be", "Name": "Blue Exorcist", "ProviderIds": {"Tmdb": "38464"}, "ProductionYear": 2011}]}
+        nouveautes.marquer("Films 4k/Film (2026)")
+        with mock.patch("emby._request", side_effect=lambda method, path, params=None, **k: _Rep(series if "Ids" in params else items)):
+            arr = {e["rel"]: e for e in nouveautes.arrivees("2026-10-11T00:00:00Z")}
+        self.assertEqual(set(arr), {"Series/Below", "Manga/Blue Exorcist", "Films 4k/Film (2026)"})   # faits compris
+        self.assertFalse(arr["Films 4k/Film (2026)"]["poster"])                                     # poster déjà fait
+        self.assertEqual(arr["Manga/Blue Exorcist"]["saisons_faites"], [1])                        # saison faite (journal)
+        self.assertFalse(arr["Manga/Blue Exorcist"]["nouveau"])                                    # nouvelle saison d'une ancienne série
+        self.assertEqual(arr["Series/Below"]["dossier"], str((self.media / "Series" / "Below").resolve()))
+
     def test_reglage_par_defaut(self):
         self.assertEqual(nouveautes.reglages()["defaut"], "debut")
         nouveautes.regler_defaut("180")

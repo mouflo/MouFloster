@@ -71,12 +71,15 @@
 
     <div class="panel" data-onglet="Connexions">
         <h2>🎵 MouFlopening (génériques)</h2>
-        <div class="sub">Après l'envoi d'un poster vers la médiathèque, si le film ou la série n'a pas encore de générique, MouFloster propose d'ouvrir MouFlopening directement sur ce titre. Mets les deux adresses : l'appli prend l'adresse locale quand tu es chez toi, l'adresse perso sinon. Vide = pas de proposition.</div>
+        <div class="sub">Après l'envoi d'un poster vers la médiathèque, si le film ou la série n'a pas encore de générique, MouFlopening le cherche tout seul (thème validé par la communauté) ; s'il ne trouve rien, MouFloster propose de l'ouvrir directement sur ce titre. Les nouveautés montrent aussi quels titres ont leur générique. Les adresses servent aux liens : l'appli prend l'adresse locale quand tu es chez toi, l'adresse perso sinon. Si MouFlopening est sur ce serveur et que rien n'est rempli, son adresse est devinée.</div>
+        <div class="state" id="mfoEtat"></div>
         <div class="field"><label for="mfoUrl">Adresse de MouFlopening sur le réseau local</label><input type="text" id="mfoUrl" placeholder="http://192.168.1.10:8001" autocapitalize="off" spellcheck="false"></div>
         <div class="field"><label for="mfoUrlExt">Adresse perso de MouFlopening (depuis l'extérieur, facultatif)</label><input type="text" id="mfoUrlExt" placeholder="https://mouflopening.mondomaine.fr" autocapitalize="off" spellcheck="false"></div>
         <div class="row"><button class="btn" id="mfoSave">Enregistrer les adresses</button></div>
         <div id="mfoMsg"></div>
     </div>
+
+    <div class="panel" data-onglet="Connexions" id="voisinesPanel"></div>
 
     <div class="panel" data-onglet="Connexions">
         <h2>🆕 Nouveautés sans poster</h2>
@@ -163,7 +166,11 @@ $('tgSave').addEventListener('click', async () => { say('tgMsg', 'Envoi d\'un me
 $('tgTest').addEventListener('click', async () => { say('tgMsg', 'Envoi…', true); const r = await post('/api/settings/telegram', tgCorps('test')); say('tgMsg', r.message || r.error, r.ok); });
 loadTg();
 
-(async () => { const a = await api('/api/settings/mouflopening'); $('mfoUrl').value = a.url || ''; $('mfoUrlExt').value = a.url_externe || ''; })();
+(async () => {
+    const a = await api('/api/settings/mouflopening'); $('mfoUrl').value = a.url || ''; $('mfoUrlExt').value = a.url_externe || '';
+    $('mfoEtat').textContent = a.reliee ? (a.ici ? '✅ MouFlopening est sur ce serveur : relié tout seul.' : '✅ Relié à MouFlopening (autre machine).')
+        : 'MouFlopening n’est pas relié : seule l’ouverture par lien est possible (sa clé : 🔗 Applis voisines).';
+})();
 simpleSave('mfoSave', 'mfoMsg', '/api/settings/mouflopening', () => ({url: $('mfoUrl').value, url_externe: $('mfoUrlExt').value}));
 
 (async () => {
@@ -196,5 +203,6 @@ $('usrListe').addEventListener('click', async e => {
 });
 loadUsr();
 </script>
+<script src="/ui/voisins.js?v={{ version|urlencode }}"></script>
 </body>
 </html>

@@ -84,7 +84,9 @@ APP_VERSION = get_version()
 app.config['MAX_CONTENT_LENGTH'] = 50 * 1024 * 1024  # 50MB max
 
 import auth
-auth.init_app(app, APP_VERSION)  # page de connexion + protection de toutes les routes
+auth.init_app(app, APP_VERSION)
+import compression   # réponses texte compressées (gzip) : beaucoup moins de données au téléphone
+compression.init_app(app)  # page de connexion + protection de toutes les routes
 import apparence
 apparence.init_app(app)     # skins et couleurs au choix, par compte
 import comptes   # 👥 comptes « copain » : créateur de posters, envoi vers LEUR Emby (jamais la médiathèque de l'admin)
@@ -160,6 +162,16 @@ redemarrer.init_app(app)
 
 import notif     # alertes Telegram (redémarrage inattendu, erreurs, mise à jour)
 notif.init_app(app, BASE_DIR, APP_VERSION, Path(BASE_DIR) / "data" / "moufloster.log", emby_settings._write_secret)
+
+
+def _apres_reprise(noms):
+    """Réglages repris d'une appli voisine : la clé TheMovieDB sert tout de suite (Emby et Telegram sont relus à chaque appel)."""
+    if "TMDB_API_KEY" in noms:
+        _set_tmdb_key(os.environ["TMDB_API_KEY"])
+
+
+import voisins   # 🔗 MouFlopening et les autres applis MouFl : appels directs protégés par une clé, reprise des réglages
+voisins.init_app(app, BASE_DIR, emby_settings._write_secret, _apres_reprise)
 
 # ============================================================================
 # TMDB Functions
@@ -449,6 +461,17 @@ def _clamp01(value, default=0.5):
         return default
 
 
+@lru_cache(maxsize=8)
+def _degrade(border_width: int) -> Image.Image:
+    """Dégradé noir de l'intérieur du cadre (courbe du PSD), calculé une fois par épaisseur de cadre."""
+    inner_w, inner_h = IMG_WIDTH - 2 * border_width, IMG_HEIGHT - 2 * border_width
+    hauteurs = np.arange(inner_h) + border_width
+    alpha = np.round(255 * np.interp(hauteurs, [p[0] for p in GRADIENT_CURVE], [p[1] for p in GRADIENT_CURVE])).astype(np.uint8)
+    rgba = np.zeros((inner_h, inner_w, 4), dtype=np.uint8)
+    rgba[:, :, 3] = alpha[:, None]
+    return Image.fromarray(rgba, "RGBA")
+
+
 def compose_poster(
     poster_image: Image.Image,
     border_style: str,  # "anime" ou "standard"
@@ -494,14 +517,7 @@ def compose_poster(
         poster = canvas
 
     if show_gradient:
-        gradient = Image.new("RGBA", (inner_w, inner_h), (0, 0, 0, 0))
-        gdraw = ImageDraw.Draw(gradient)
-        for y in range(inner_h):
-            abs_y = y + border_width
-            alpha = int(round(255 * float(np.interp(abs_y, [p[0] for p in GRADIENT_CURVE], [p[1] for p in GRADIENT_CURVE]))))
-            if alpha:
-                gdraw.line([(0, y), (inner_w, y)], fill=(0, 0, 0, alpha))
-        poster = Image.alpha_composite(poster.convert("RGBA"), gradient).convert("RGB")
+        poster = Image.alpha_composite(poster.convert("RGBA"), _degrade(border_width)).convert("RGB")
 
     final = Image.new("RGB", (IMG_WIDTH, IMG_HEIGHT), "white")
     final.paste(poster, (border_width, border_width))
@@ -756,17 +772,15 @@ def api_preview():
             rapport=lignes
         )
 
-        # Convertir en base64 pour l'affichage
+        # Envoyé tel quel en JPEG (qualité 85, sans différence visible à l'écran) : environ deux fois moins de données
+        # qu'avant (JPEG 95 en base64 dans du JSON) ; le débord et la taille des lignes passent dans les en-têtes
         buffer = BytesIO()
-        composed.save(buffer, format="JPEG", quality=95)
-        buffer.seek(0)
-        img_base64 = base64.b64encode(buffer.getvalue()).decode()
-
-        return jsonify({
-            "preview": f"data:image/jpeg;base64,{img_base64}",
-            "overflow": cover_overflow(img.size, border_style, data.get("zoom", 1.0)),
-            "lignes": lignes,
-        })
+        composed.save(buffer, format="JPEG", quality=85)
+        resp = app.response_class(buffer.getvalue(), mimetype="image/jpeg")
+        resp.headers["X-Apercu-Debord"] = json.dumps(cover_overflow(img.size, border_style, data.get("zoom", 1.0)))
+        resp.headers["X-Apercu-Lignes"] = json.dumps(lignes)          # ASCII seulement (ensure_ascii)
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
     except Exception as e:
         logger.error(f"Erreur composition: {e}")
         return jsonify({"error": str(e)}), 500
@@ -1179,7 +1193,12 @@ def api_nouveautes():
     if not emby.configured():
         return jsonify({"error": "Emby n'est pas réglé (⚙️ Réglages → Connexions)", "elements": []})
     try:
-        return jsonify(nouveautes.lister(request.args.get("choix")))
+        r = nouveautes.lister(request.args.get("choix"))
+        for el in r["elements"]:                     # 🎵 a-t-il déjà son générique ? (bouton pour l'ouvrir dans MouFlopening)
+            d = library.resolve_folder(el["rel"])
+            el["dossier"] = str(d) if d else ""
+            el["generique"] = _a_un_generique(d) if d else None
+        return jsonify(r)
     except emby.EmbyError as e:
         return jsonify({"error": str(e), "elements": []})
     except Exception as e:
@@ -1228,6 +1247,49 @@ def _a_un_generique(dossier):
         return tm.is_dir() and any(f.suffix.lower() in _GENERIQUE_EXTS and f.stat().st_size >= 8192 for f in tm.iterdir())
     except OSError:
         return None
+
+
+# ---------- 🔗 MouFlopening, de serveur à serveur (voisins.py) ----------
+
+@app.route("/api/generique/auto", methods=["POST"])
+def api_generique_auto():
+    """Après l'envoi d'un poster : MouFlopening cherche lui-même le générique validé (ThemerrDB, AnimeThemes) du titre,
+    sans quitter MouFloster. -> {ok, job} à suivre avec /api/generique/job/<job>, ou {ok: False, error} (on propose alors
+    d'ouvrir MouFlopening)."""
+    dossier = str((request.get_json(silent=True) or {}).get("dossier") or "")
+    if not dossier:
+        return jsonify({"ok": False, "error": "Dossier inconnu"}), 400
+    try:
+        r = voisins.appeler("mouflopening", "POST", "/api/voisin/generique/auto", json={"dossier": dossier})
+    except voisins.ErreurVoisin as e:
+        return jsonify({"ok": False, "error": str(e)})
+    logger.info("🎵 Générique demandé à MouFlopening : %s", dossier)
+    return jsonify(r)
+
+
+@app.route("/api/generique/job/<jid>")
+def api_generique_job(jid):
+    if not re.fullmatch(r"[0-9a-f]{6,32}", jid):
+        return jsonify({"error": "Opération inconnue"}), 404
+    try:
+        return jsonify(voisins.appeler("mouflopening", "GET", f"/api/voisin/job/{jid}"))
+    except voisins.ErreurVoisin as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@voisins.route(app, "/api/voisin/nouveautes")
+def voisin_nouveautes():
+    """Pour le compte rendu de la nuit de MouFlopening : tout ce qui est arrivé dans Emby depuis « depuis »,
+    avec ce qui reste à faire en posters."""
+    depuis = str(request.args.get("depuis") or "")
+    if not re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", depuis):
+        return jsonify({"ok": False, "error": "Date « depuis » invalide"}), 400
+    if not emby.configured():
+        return jsonify({"ok": False, "error": "Emby n'est pas réglé dans MouFloster"}), 503
+    try:
+        return jsonify({"ok": True, "elements": nouveautes.arrivees(depuis)})
+    except emby.EmbyError as e:
+        return jsonify({"ok": False, "error": str(e)}), 502
 
 
 # ---------- MouFlanga : le poster devient la couverture d'une série de mangas ----------
@@ -1429,6 +1491,7 @@ HTML_TEMPLATE = """
     <script src="/ui/mou-ui.js?v={{ version|urlencode }}" defer></script>
 <link rel="stylesheet" href="/ui/apparence.css?v={{ version|urlencode }}">
 <script src="/ui/apparence.js?v={{ version|urlencode }}" defer></script>
+<script src="/ui/gestes.js?v={{ version|urlencode }}" defer></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1669,7 +1732,8 @@ HTML_TEMPLATE = """
         .poster-tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
         .poster-tools select { flex: 1 1 160px; min-width: 0; padding: 8px; border-radius: 6px; border: 1px solid #ccc; font-size: 14px; }
         .upload-btn { flex: 0 0 auto; padding: 8px 12px; border-radius: 6px; background: #667eea; color: #fff; font-size: 14px; cursor: pointer; }
-        .preview-image.draggable { cursor: grab; touch-action: none; }
+        .preview-image.draggable { cursor: grab; }
+        .preview-image.recadrage { touch-action: none; outline: 2px dashed var(--accent, #52b54b); outline-offset: -2px; }
         .preview-image.draggable.dragging { cursor: grabbing; }
         .preview-image img { user-select: none; -webkit-user-drag: none; }
         .crop-box { margin: 12px 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
@@ -1727,7 +1791,7 @@ HTML_TEMPLATE = """
         }
 
         .checkbox-item label {
-            flex: 1;
+            flex: 0 1 auto;          /* seul le texte est sensible au doigt, pas toute la ligne */
             min-width: 0;
         }
 
@@ -2028,13 +2092,15 @@ HTML_TEMPLATE = """
         .layout-btn { width: 100%; margin: 6px 0 10px; }
         /* 🆕 Nouveautés sans poster */
         .nouv-barre { display: flex; align-items: center; gap: 8px; white-space: nowrap; margin-bottom: 8px; font-size: 0.85em; color: var(--muted); }
-        .nouv-barre select { flex: 1; width: auto; }
+        .nouv-barre select { flex: 1; width: auto; min-width: 0; }
         .nouv-item { padding: 8px 0; border-top: 1px solid var(--line); }
         .nouv-nom { font-weight: 600; font-size: 0.9em; margin-bottom: 6px; }
         .nouv-nom small { font-weight: 400; color: var(--muted); }
         .nouv-act { display: flex; flex-wrap: wrap; gap: 6px; }
         .nouv-act button { width: auto !important; padding: 6px 10px !important; font-size: 0.82em !important; margin: 0 !important; }
         .nouv-vide { font-size: 0.85em; color: var(--muted); padding: 6px 0; }
+        .nouv-gen { align-self: center; font-size: 0.8em; color: var(--muted); }
+        .nouv-gen-lien { display: inline-block; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); color: var(--text); text-decoration: none; }
         body.copain #nouvPanel { display: none !important; }
         .taille-info { font-size: 0.82em; margin-top: 4px; line-height: 1.35; }
         .taille-info:empty { display: none; }
@@ -2138,6 +2204,17 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
 .copain-existant img { width:70px; border-radius:4px; }
 .copain-existant .act { display:flex; flex-direction:column; gap:6px; }
 .copain-existant button, .copain-existant a { width:auto; padding:6px 10px; font-size:13px; }
+/* Gestes au téléphone (ui/gestes.js) : curseurs à glisser de côté ou − / +, aperçu à recadrer seulement en mode ✋ */
+.curseur { display:flex; align-items:center; gap:8px; touch-action:pan-y; }
+.curseur input[type=range] { flex:1; min-width:0; margin:0; }
+.curseur .pas { flex:none; width:42px !important; height:36px; padding:0 !important; margin:0 !important; font-size:18px; line-height:1; }
+@media (pointer: coarse) { .curseur input[type=range] { pointer-events:none; } .souris-seule { display:none; } }
+@media (pointer: fine) { .doigt-seul { display:none !important; } }
+#recadrerBtn { margin-bottom:4px; }
+#recadrerBtn.actif { background:var(--accent, #52b54b) !important; color:#fff !important; }
+#miniApercu { position:fixed; right:12px; bottom:12px; z-index:60; width:78px !important; padding:0 !important; margin:0 !important; border:2px solid var(--accent, #52b54b) !important; border-radius:6px; overflow:hidden; background:#000 !important; box-shadow:0 4px 16px rgba(0,0,0,.7); line-height:0; }
+#miniApercu img { display:block; width:100%; height:auto; }
+#retourEdition { position:fixed; right:12px; bottom:12px; z-index:60; width:auto !important; margin:0 !important; padding:10px 14px !important; box-shadow:0 4px 16px rgba(0,0,0,.7); }
 </style>
 <link rel="stylesheet" href="{{ skin_url(request.args.get('skin') == 'off') }}">
 </head>
@@ -2154,6 +2231,11 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                 <div class="lib-status ok" id="mfgBandeau" hidden style="margin-bottom:12px">
                     <span id="mfgBandeauTexte"></span><br>
                     <a id="mfgRetour" class="mfg-retour" hidden></a>
+                </div>
+                <!-- Venue depuis MouFlopening (bouton « 🖼 Poster dans MouFloster ») -->
+                <div class="lib-status ok" id="venueBandeau" hidden style="margin-bottom:12px">
+                    <span id="venueTexte"></span><br>
+                    <a id="venueRetour" class="mfg-retour" hidden></a>
                 </div>
                 <!-- 🆕 Nouveautés : ajoutés dans Emby, pas encore de poster fait -->
                 <div class="section" id="nouvPanel" hidden>
@@ -2277,13 +2359,15 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                 <div class="section">
                     <h3>👁️ Aperçu</h3>
                     <div class="message" id="message"></div>
+                    <div class="lib-status" id="genAuto" hidden></div>
                     <div class="loading" id="previewLoading">Génération...</div>
                     <div class="preview-box">
                         <div class="preview-image" id="previewImage">
                             <div class="preview-placeholder">Aperçu</div>
                         </div>
                     <div class="crop-box">
-                        <div class="crop-title">Recadrage <span>— glisse directement l'image ci-dessus, ou utilise les curseurs</span></div>
+                        <div class="crop-title">Recadrage <span class="doigt-seul">— « ✋ Recadrer au doigt » (ou appui long sur l'image), puis glisse l'image ; deux doigts pour zoomer. Sinon, les curseurs : glisse-les de côté, ou − / +.</span><span class="souris-seule">— glisse directement l'image ci-dessus, ou utilise les curseurs</span></div>
+                        <button type="button" class="secondary doigt-seul" id="recadrerBtn">✋ Recadrer au doigt</button>
                         <label for="cropX">← gauche / droite →</label>
                         <input type="range" id="cropX" min="0" max="100" value="50" />
                         <label for="cropY">↑ haut / bas ↓</label>
@@ -2303,6 +2387,10 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             </div>
         </div>
     </div>
+
+    <!-- Au téléphone : petit aperçu collé en bas tant que le grand est hors de l'écran, et retour à l'endroit quitté -->
+    <button type="button" id="miniApercu" hidden aria-label="Voir l'aperçu"><img alt="" /></button>
+    <button type="button" id="retourEdition" hidden>↩ Retour aux réglages</button>
 
     <!-- Fenêtre: effacer un logo / texte -->
     <div id="depotVoile" hidden>⬆️ Lâche l’image ici</div>
@@ -2346,7 +2434,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
     <!-- Fenêtre: couverture envoyée dans MouFlanga -->
     <div class="modal-overlay" id="mfgFiniModal">
         <div class="modal" style="max-width:420px">
-            <div class="modal-head"><div><h3>✅ Couverture envoyée</h3><div class="modal-sub" id="mfgFiniTexte"></div></div></div>
+            <div class="modal-head"><div><h3 id="mfgFiniTitre">✅ Couverture envoyée</h3><div class="modal-sub" id="mfgFiniTexte"></div></div></div>
             <div class="lib-actions">
                 <a id="mfgFiniRetour" class="mfg-retour" hidden>↩ Retour à MouFlanga</a>
                 <button class="secondary" id="mfgFiniFermer" onclick="document.getElementById('mfgFiniModal').classList.remove('show')">OK</button>
@@ -2530,24 +2618,61 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
         ['text1Enabled', 'text2Enabled', 'text3Enabled', 'text4Enabled', 'text5Enabled', 'seasonEnabled'].forEach(id => {
             document.getElementById(id).addEventListener('change', generatePreview);
         });
-        // Glisser le poster directement sur l'aperçu pour le déplacer dans le cadre
+        // Glisser le poster directement sur l'aperçu pour le déplacer dans le cadre.
+        // Au doigt, seulement en mode « ✋ Recadrer » (bouton ou appui long sur l'image) : sinon un doigt posé sur
+        // l'aperçu fait défiler la page sans rien changer. En mode recadrage, deux doigts écartés ou rapprochés = zoom.
+        // À la souris, on glisse directement comme avant.
+        function modeRecadrage(on) {
+            const box = document.getElementById('previewImage'), b = document.getElementById('recadrerBtn');
+            box.classList.toggle('recadrage', !!on);
+            if (b) { b.textContent = on ? '✓ Recadrage fini' : '✋ Recadrer au doigt'; b.classList.toggle('actif', !!on); }
+        }
         (function setupPreviewDrag() {
             const box = document.getElementById('previewImage');
-            let drag = null;
+            const doigts = new Map();
+            let drag = null, pince = null, appuiLong = null;
+            const zoomEl = document.getElementById('zoom');
+            const debut = (ev, img) => ({
+                x: ev.clientX, y: ev.clientY,
+                cx: document.getElementById('cropX').value / 100,
+                cy: document.getElementById('cropY').value / 100,
+                scale: 1000 / img.getBoundingClientRect().width
+            });
+            const ecart = () => { const [a, b] = [...doigts.values()]; return Math.hypot(a.x - b.x, a.y - b.y) || 1; };
             box.addEventListener('pointerdown', (ev) => {
                 const img = box.querySelector('img');
-                if (!img || ev.target !== img || !box.classList.contains('draggable')) return;
+                if (!img || ev.target !== img) return;
+                const doigt = ev.pointerType === 'touch';
+                if (doigt && !box.classList.contains('recadrage')) {
+                    // appui long (½ s sans bouger) : passe en mode recadrage ; si le doigt bouge avant, c'est un défilement
+                    clearTimeout(appuiLong && appuiLong.t);
+                    const id = ev.pointerId;
+                    appuiLong = {x: ev.clientX, y: ev.clientY, x0: ev.clientX, y0: ev.clientY, t: setTimeout(() => {
+                        const p = appuiLong; appuiLong = null; modeRecadrage(true);
+                        if (navigator.vibrate) navigator.vibrate(15);
+                        try { box.setPointerCapture(id); } catch (e) {}
+                        doigts.set(id, {x: p.x, y: p.y});
+                        if (box.classList.contains('draggable')) { drag = debut({clientX: p.x, clientY: p.y}, img); box.classList.add('dragging'); }
+                    }, 500)};
+                    return;
+                }
+                if (!doigt && !box.classList.contains('draggable')) return;
                 ev.preventDefault();
-                box.setPointerCapture(ev.pointerId);
-                drag = {
-                    x: ev.clientX, y: ev.clientY,
-                    cx: document.getElementById('cropX').value / 100,
-                    cy: document.getElementById('cropY').value / 100,
-                    scale: 1000 / img.getBoundingClientRect().width
-                };
-                box.classList.add('dragging');
+                try { box.setPointerCapture(ev.pointerId); } catch (e) {}
+                doigts.set(ev.pointerId, {x: ev.clientX, y: ev.clientY});
+                if (doigts.size === 2) { drag = null; pince = {d: ecart(), z: Number(zoomEl.value)}; return; }
+                if (box.classList.contains('draggable')) { drag = debut(ev, img); box.classList.add('dragging'); }
             });
             box.addEventListener('pointermove', (ev) => {
+                if (appuiLong && Math.hypot(ev.clientX - appuiLong.x0, ev.clientY - appuiLong.y0) > 10) { clearTimeout(appuiLong.t); appuiLong = null; }
+                else if (appuiLong) { appuiLong.x = ev.clientX; appuiLong.y = ev.clientY; }
+                if (!doigts.has(ev.pointerId)) return;
+                doigts.set(ev.pointerId, {x: ev.clientX, y: ev.clientY});
+                if (pince && doigts.size === 2) {
+                    const z = Math.round(Math.min(300, Math.max(50, pince.z * ecart() / pince.d)));
+                    if (z !== Number(zoomEl.value)) { zoomEl.value = z; zoomEl.dispatchEvent(new Event('input')); }
+                    return;
+                }
                 if (!drag) return;
                 const clamp = (v) => Math.min(1, Math.max(0, v));
                 // pousser le poster vers la droite = montrer plus de sa partie gauche
@@ -2561,9 +2686,18 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                 }
                 generatePreview(true);
             });
-            const stop = () => { drag = null; box.classList.remove('dragging'); };
+            const stop = (ev) => {
+                if (appuiLong) { clearTimeout(appuiLong.t); appuiLong = null; }
+                doigts.delete(ev.pointerId);
+                if (doigts.size < 2) pince = null;
+                if (!doigts.size) { drag = null; box.classList.remove('dragging'); }
+            };
             box.addEventListener('pointerup', stop);
             box.addEventListener('pointercancel', stop);
+            box.addEventListener('contextmenu', (ev) => { if (ev.target.closest('img')) ev.preventDefault(); });   // pas de menu « enregistrer l'image » sur l'appui long
+            // appui long réussi : le doigt resté posé glisse tout de suite l'image, sans faire défiler la page
+            box.addEventListener('touchmove', (ev) => { if (box.classList.contains('recadrage')) ev.preventDefault(); }, {passive: false});
+            document.getElementById('recadrerBtn').addEventListener('click', () => modeRecadrage(!box.classList.contains('recadrage')));
         })();
         // Curseurs: aperçu en direct pendant qu'on les déplace
         ['cropX', 'cropY'].forEach(id => {
@@ -3144,19 +3278,25 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                         zoom: document.getElementById('zoom').value / 100
                     })
                 });
-                const data = await res.json();
-
-                if (data.error) {
-                    showMessage(data.error, 'error');
+                if (!res.ok || !(res.headers.get('Content-Type') || '').startsWith('image/')) {
+                    let data = {};
+                    try { data = await res.json(); } catch (e) {}
+                    showMessage(data.error || 'Erreur ' + res.status, 'error');
                     return;
                 }
-
+                // L'aperçu arrive en image JPEG ; le débord (recadrage) et la taille des lignes dans les en-têtes
+                const lire = (nom, defaut) => { try { return JSON.parse(res.headers.get(nom)) || defaut; } catch (e) { return defaut; } };
+                const url = URL.createObjectURL(await res.blob());
                 const previewDiv = document.getElementById('previewImage');
-                previewDiv.innerHTML = `<img src="${data.preview}" draggable="false" />`;
-                previewOverflow = data.overflow || [0, 0];
-                afficherTailles(data.lignes);
+                const ancien = previewDiv.querySelector('img');
+                if (ancien) { ancien.src = url; } else { previewDiv.innerHTML = '<img draggable="false" alt="Aperçu" />'; previewDiv.querySelector('img').src = url; }
+                if (window.apercuUrl) setTimeout(((u) => () => URL.revokeObjectURL(u))(window.apercuUrl), 2000);
+                window.apercuUrl = url;
+                document.dispatchEvent(new CustomEvent('apercu', {detail: url}));
+                previewOverflow = lire('X-Apercu-Debord', [0, 0]);
+                afficherTailles(lire('X-Apercu-Lignes', []));
                 previewDiv.classList.toggle('draggable', previewOverflow[0] > 1 || previewOverflow[1] > 1);
-                if (quiet !== true) showMessage('Aperçu généré', 'success');
+                // plus de message « Aperçu généré » : l'image suffit, et la bulle cachait le petit aperçu au téléphone
             } catch (err) {
                 showMessage('Erreur: ' + err.message, 'error');
             } finally {
@@ -3255,6 +3395,47 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             mfgBandeau(false);
             if (mfgVenue.q) { document.getElementById('searchQuery').value = mfgVenue.q; search(); }
         });
+        // Ouverture depuis MouFlopening : ?de=MouFlopening&q=<titre>&tmdb=<id>&type=tv|movie&retour=<adresse>
+        const venueOpening = (() => {
+            const p = new URLSearchParams(location.search), retour = p.get('retour') || '';
+            if (p.get('de') !== 'MouFlopening') return {};
+            return {de: 'MouFlopening', q: p.get('q') || '', tmdb: /^\d+$/.test(p.get('tmdb') || '') ? Number(p.get('tmdb')) : null,
+                    type: p.get('type') === 'movie' ? 'movie' : 'tv', retour: /^https?:\/\//i.test(retour) ? retour : '',
+                    saison: /^\d{1,3}$/.test(p.get('saison') || '') ? Number(p.get('saison')) : null};
+        })();
+        function venueBandeau(fini) {
+            document.getElementById('venueBandeau').hidden = false;
+            document.getElementById('venueTexte').textContent = fini
+                ? '✅ Poster de « ' + venueOpening.q + ' » envoyé dans la médiathèque.'
+                : '🖼️ Poster pour « ' + venueOpening.q + ' » (envoyé par MouFlopening) : choisis une affiche, personnalise-la, puis « 📁 Envoyer vers la médiathèque ».';
+            const a = document.getElementById('venueRetour');
+            a.hidden = !venueOpening.retour; a.href = venueOpening.retour;
+            a.textContent = fini ? '↩ Retour à MouFlopening' : '↩ Annuler et revenir';
+        }
+        function venueFini() {
+            venueBandeau(true);
+            if (!venueOpening.retour) return;
+            document.getElementById('mfgFiniTitre').textContent = '✅ Poster envoyé';
+            document.getElementById('mfgFiniTexte').textContent = 'Le poster de « ' + venueOpening.q + ' » est dans la médiathèque.';
+            const a = document.getElementById('mfgFiniRetour');
+            a.hidden = false; a.href = venueOpening.retour; a.textContent = '↩ Retour à MouFlopening';
+            document.getElementById('mfgFiniFermer').textContent = 'Rester dans MouFloster';
+            document.getElementById('mfgFiniModal').classList.add('show');
+        }
+        document.addEventListener('DOMContentLoaded', async () => {
+            if (!venueOpening.de || !venueOpening.q) return;
+            venueBandeau(false);
+            document.getElementById('searchQuery').value = venueOpening.q;
+            const item = await search({choisir: venueOpening.tmdb ? {id: venueOpening.tmdb, media_type: venueOpening.type} : null});
+            if (venueOpening.saison !== null) {                   // une saison choisie dans MouFlopening : son poster
+                const sp = document.getElementById('seasonSpecial'), en = document.getElementById('seasonEnabled'), s = document.getElementById('season');
+                en.checked = true; sp.checked = venueOpening.saison === 0;
+                if (venueOpening.saison > 0) s.value = String(venueOpening.saison);
+                s.disabled = sp.checked;
+            }
+            if (item) { generatePreview(); document.getElementById('posters').scrollIntoView({behavior: 'smooth', block: 'start'}); }
+            else showMessage('Choisis le bon titre dans la liste de recherche', 'error');
+        });
         function mfgStatus(msg, kind) { const el = document.getElementById('mfgStatus'); el.textContent = msg; el.className = 'lib-status' + (kind ? ' ' + kind : ''); }
         async function sendToMouflanga() {
             const data = await saveToServer();
@@ -3306,25 +3487,73 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
         }
         // Fenêtre de fin : bien visible, avec le bouton pour revenir sur la série dans MouFlanga
         function mfgFini(nom, sauvegarde) {
+            document.getElementById('mfgFiniTitre').textContent = '✅ Couverture envoyée';
+            document.getElementById('mfgFiniRetour').textContent = '↩ Retour à MouFlanga';
             document.getElementById('mfgFiniTexte').textContent = 'La couverture de « ' + nom + ' » est dans MouFlanga' + (sauvegarde ? ' (l’ancienne est sauvegardée).' : '.');
             const a = document.getElementById('mfgFiniRetour');
             a.hidden = !mfgVenue.retour; if (mfgVenue.retour) a.href = mfgVenue.retour;
             document.getElementById('mfgFiniFermer').textContent = mfgVenue.retour ? 'Rester dans MouFloster' : 'OK';
             document.getElementById('mfgFiniModal').classList.add('show');
         }
-        // Pas encore de générique : proposer d'ouvrir MouFlopening directement sur ce titre
-        async function proposerGenerique(titre, dossier) {
+        // Adresse de MouFlopening pour le navigateur : celle du réseau local ou l'adresse perso selon d'où l'on vient ;
+        // rien de réglé mais MouFlopening installé sur ce serveur : même machine, son port
+        async function adresseMouflopening() {
             let a = {};
-            try { a = await (await fetch('/api/settings/mouflopening')).json(); } catch (e) { return; }
+            try { a = await (await fetch('/api/settings/mouflopening')).json(); } catch (e) { return ''; }
             const h = location.hostname;
             const local = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h) || /\.(local|lan|home)$/.test(h);
             const base = local ? (a.url || a.url_externe) : (a.url_externe || a.url);
+            if (base) return base.replace(/\/$/, '');
+            return a.ici && local ? location.protocol + '//' + h + ':' + a.port : '';
+        }
+        function lienMouflopening(base, dossier) {
+            return base + '/?dossier=' + encodeURIComponent(dossier) + '&de=MouFloster&retour=' + encodeURIComponent(location.origin + location.pathname + '?reprise=1');
+        }
+        // Pas encore de générique : proposer d'ouvrir MouFlopening directement sur ce titre (raison : pourquoi il n'a rien trouvé seul)
+        async function proposerGenerique(titre, dossier, raison) {
+            const base = await adresseMouflopening();
             if (!base) return;
-            document.getElementById('genTexte').textContent = '« ' + titre + ' » n’a pas encore de générique dans la médiathèque. MouFlopening peut le trouver : il s’ouvre directement sur ce titre et lance la recherche.';
+            document.getElementById('genTexte').textContent = raison
+                ? 'MouFlopening n’a pas trouvé seul de générique pour « ' + titre + ' » (' + raison + '). Tu peux le choisir à l’écoute : il s’ouvre directement sur ce titre.'
+                : '« ' + titre + ' » n’a pas encore de générique dans la médiathèque. MouFlopening peut le trouver : il s’ouvre directement sur ce titre et lance la recherche.';
             const ouvrir = document.getElementById('genOuvrir');
-            ouvrir.href = base.replace(/\/$/, '') + '/?dossier=' + encodeURIComponent(dossier) + '&retour=' + encodeURIComponent(location.origin + location.pathname + '?reprise=1');
+            ouvrir.href = lienMouflopening(base, dossier);
             ouvrir.onclick = garderFiche;
             document.getElementById('genModal').classList.add('show');
+        }
+        // Après l'envoi d'un poster : MouFlopening cherche lui-même le générique validé, sans quitter la page.
+        // Il n'est proposé de l'ouvrir que s'il n'a rien trouvé (ou s'il ne répond pas).
+        async function chercherGenerique(titre, dossier) {
+            let r = {};
+            try { r = await (await fetch('/api/generique/auto', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({dossier})})).json(); } catch (e) {}
+            if (!r.ok || !r.job) {
+                if (r.ok && r.deja) return;
+                return proposerGenerique(titre, dossier);
+            }
+            const bandeau = document.getElementById('genAuto');
+            bandeau.hidden = false; bandeau.className = 'lib-status';
+            bandeau.textContent = '🎵 MouFlopening cherche le générique de « ' + titre + ' »…';
+            const fin = Date.now() + 4 * 60 * 1000;
+            while (Date.now() < fin) {
+                await new Promise(ok => setTimeout(ok, 1500));
+                let st = {};
+                try { st = await (await fetch('/api/generique/job/' + r.job)).json(); } catch (e) { continue; }
+                if (st.error) break;
+                const etape = (st.steps || []).slice(-1)[0];
+                if (!st.done) { if (etape) bandeau.textContent = '🎵 MouFlopening : ' + etape.text; continue; }
+                const res = (st.result && st.result[0]) || {};
+                if (res.ok) {
+                    bandeau.className = 'lib-status ok';
+                    bandeau.textContent = '🎵 Générique posé par MouFlopening pour « ' + titre + ' » : ' + (res.message || '');
+                    setTimeout(() => { bandeau.hidden = true; }, 15000);
+                } else {
+                    bandeau.hidden = true;
+                    proposerGenerique(titre, dossier, (res.message || res.error || '').replace(/^⏳ /, ''));
+                }
+                return;
+            }
+            bandeau.hidden = true;
+            proposerGenerique(titre, dossier);
         }
         // Retour de MouFlopening : la fiche revient telle qu'elle était (recherche, titre, affiche, textes, saison)
         function garderFiche() {
@@ -3354,7 +3583,9 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
 
         // ===== 🆕 Nouveautés : ajoutés dans Emby, pas encore de poster fait =====
         let nouvElements = [], nouvTout = false;
+        let nouvMouflopening = '';             // adresse de MouFlopening (bouton 🎵 des nouveautés), '' si pas relié
         async function nouvInit() {
+            adresseMouflopening().then(base => { nouvMouflopening = base; if (nouvElements.length) nouvAfficher(); });
             let r = {};
             try { const res = await fetch('/api/settings/nouveautes'); if (!res.ok) return; r = await res.json(); } catch (e) { return; }
             const sel = document.getElementById('nouvChoix');
@@ -3391,6 +3622,15 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                 if (el.poster) bouton('🖼️ Poster', () => nouvOuvrir(el, null));
                 el.saisons.forEach(n => bouton(n === 0 ? 'Spéciaux' : 'Saison ' + n, () => nouvOuvrir(el, n)));
                 bouton('✓ Déjà bon', () => nouvDejaBon(el), 'secondary');
+                // 🎵 générique : déjà là, ou bouton pour l'ouvrir directement dans MouFlopening
+                const gen = document.createElement('span'); gen.className = 'nouv-gen';
+                if (el.generique === true) { gen.textContent = '🎵 générique ✓'; gen.title = 'Ce titre a déjà son générique'; }
+                else if (el.generique === false && nouvMouflopening) {
+                    const a = document.createElement('a'); a.className = 'nouv-gen-lien'; a.textContent = '🎵 Générique';
+                    a.href = lienMouflopening(nouvMouflopening, el.dossier); a.title = 'Pas encore de générique : ouvrir MouFlopening sur ce titre';
+                    gen.appendChild(a);
+                } else if (el.generique === false) gen.textContent = '🔇 pas de générique';
+                if (gen.textContent || gen.firstChild) act.appendChild(gen);
                 row.append(nom, act); liste.appendChild(row);
             });
             if (nouvElements.length > max) {
@@ -3792,7 +4032,8 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                     if (!data.emby.ok) kind = 'error';
                 }
                 showMessage(msg, kind);
-                if (data.generique === false) proposerGenerique(selectedItem.title, data.dossier);
+                if (data.generique === false) chercherGenerique(selectedItem.title, data.dossier);
+                if (venueOpening.de) venueFini();
                 nouvCharger();
             } catch (err) {
                 libSetStatus('❌ ' + err.message, 'err');
@@ -3892,6 +4133,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
 
 
 if __name__ == "__main__":
+    voisins.preparer_cle()
     threading.Thread(target=_menage_copains, daemon=True).start()
     logger.info("=" * 60)
     logger.info("🎬 Démarrage Personnaliseur de Posters")
