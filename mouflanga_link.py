@@ -144,6 +144,23 @@ def meilleure(noms: list[str], titres: list[str]) -> str | None:
     return meilleur if score >= 0.6 else None
 
 
+def correspond(nom: str, requete: str) -> bool:
+    """Le nom d'une série contient-il ce qu'on a tapé ? Sans accents, majuscules, espaces ni « + / Plus » : « again » trouve
+    « + Again », « airgear » trouve « Air Gear »."""
+    sans_plus = lambda t: " ".join(m for m in _simple(t).split() if m != "plus").replace(" ", "")
+    a, q = sans_plus(nom), sans_plus(requete)
+    return len(q) >= 3 and q in a
+
+
+def chercher(requete: str, liste: list[dict], maximum: int = 6) -> list[dict]:
+    """Séries de MouFlanga qui portent le nom tapé et qui ont un poster choisi, le nom le plus proche d'abord : le poster déjà fait
+    se retrouve même quand TheMovieDB ne connaît pas la série (manga sans anime)."""
+    trouvees = [x for x in liste if x.get("cover") and correspond(x["name"], requete)]
+    exact = _simple(requete)
+    trouvees.sort(key=lambda x: (_simple(x["name"]) != exact, len(x["name"])))
+    return trouvees[:maximum]
+
+
 def dossier_serie(nom: str) -> Path | None:
     """Dossier de la série, uniquement s'il fait partie de la bibliothèque (pas de « .. » ni de chemin)."""
     if not nom or "/" in nom or nom.startswith("."):

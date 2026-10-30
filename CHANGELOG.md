@@ -3,6 +3,9 @@
 La version affichée est « 1.0 » suivie du nombre de mises à jour depuis le passage en 1.0 (et de l'empreinte du commit).
 L'historique d'avant ce fichier se lit dans les commits du dépôt.
 
+## 30 octobre 2026
+- 📚 **Les posters déjà faits dans MouFlanga se retrouvent à la recherche, même sans fiche TheMovieDB** (manga sans anime) : en tapant un nom, les séries de MouFlanga qui portent ce nom et ont un poster choisi apparaissent en tête (« 📚 + Again · ton poster dans MouFlanga ») ; « again », « plus again » et « + Again » donnent le même résultat. Un clic reprend le poster pour le modifier ou le renvoyer. Réservé au compte principal.
+
 ## 26 octobre 2026
 - 📱 **Au téléphone, plus de réglage changé par mégarde en faisant défiler la page** :
   - un appui qui arrive pendant que la page défile (le doigt posé pour l'arrêter) est ignoré : aucune case cochée, aucun bouton ni poster choisi sans le vouloir ; seul le texte d'une case est sensible au doigt, plus toute la ligne ;

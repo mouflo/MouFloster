@@ -1313,6 +1313,43 @@ def api_mouflanga_series():
     return jsonify({"series": liste, "selected": choisie})
 
 
+@app.route("/api/mouflanga/recherche")
+def api_mouflanga_recherche():
+    """Séries de MouFlanga (avec poster choisi) dont le nom contient la recherche : proposées avec les résultats de TheMovieDB."""
+    if not mouflanga_link.mode():
+        return jsonify({"series": []})
+    try:
+        liste = mouflanga_link.series()
+    except mouflanga_link.ErreurMouflanga:
+        return jsonify({"series": []})
+    return jsonify({"series": mouflanga_link.chercher(request.args.get("q", "").strip(), liste)})
+
+
+@app.route("/api/mouflanga/reprendre", methods=["POST"])
+def api_mouflanga_reprendre():
+    """Le poster actuel d'une série de MouFlanga devient une image de travail (comme une image envoyée), pour le refaire ou le garder."""
+    nom = str((request.get_json(silent=True) or {}).get("name", ""))
+    try:
+        octets = mouflanga_link.couverture(nom)
+    except mouflanga_link.ErreurMouflanga as e:
+        return jsonify({"error": str(e)}), 502
+    if not octets:
+        return jsonify({"error": "Cette série n'a pas de poster choisi dans MouFlanga"}), 404
+    try:
+        img = Image.open(BytesIO(octets))
+        img.load()
+        img = ImageOps.exif_transpose(img).convert("RGB")
+    except Exception:
+        return jsonify({"error": "Le poster de MouFlanga n'est pas une image lisible"}), 502
+    if max(img.size) > UPLOAD_MAX_SIDE:
+        img.thumbnail((UPLOAD_MAX_SIDE, UPLOAD_MAX_SIDE), Image.LANCZOS)
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    fichier = uuid.uuid4().hex + ".jpg"
+    img.save(os.path.join(UPLOAD_DIR, fichier), quality=95)
+    logger.info(f"📚 Poster repris de MouFlanga : {nom} ({img.width}x{img.height})")
+    return jsonify({"url": UPLOAD_URL_PREFIX + fichier, "w": img.width, "h": img.height})
+
+
 @app.route("/api/mouflanga/cover")
 def api_mouflanga_cover():
     """Couverture actuelle d'une série MouFlanga (aperçu avant remplacement)."""
@@ -2772,6 +2809,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                     if (choisir && !choisi && String(item.id) === String(choisir.id) && item.media_type === choisir.media_type) choisi = div;
                 });
                 proposerPosterLibre([query, (() => { try { return mfgVenue.serie || ''; } catch (e) { return ''; } })()], resultsDiv);
+                proposerSeriesMouflanga(query, resultsDiv);
                 if (choisi) { choisi.click(); await choisi._chargement; return selectedItem; }
             } finally {
                 document.getElementById('searchLoading').classList.remove('show');
@@ -3175,6 +3213,52 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                     div.classList.add('active');
                     resultsDiv.classList.add('collapsed');
                     showMessage('Poster repris tel que tu l’avais fait : modifie-le puis renvoie-le', 'success');
+                });
+                resultsDiv.insertBefore(div, resultsDiv.firstChild);
+            }
+        }
+
+        // Séries de MouFlanga qui portent ce nom et ont déjà un poster : proposées même sans fiche TheMovieDB (manga sans anime)
+        async function proposerSeriesMouflanga(requete, resultsDiv) {
+            let data = {};
+            try { data = await (await fetch('/api/mouflanga/recherche?q=' + encodeURIComponent(requete))).json(); } catch (e) { return; }
+            for (const s of (data.series || []).reverse()) {
+                const nom = s.name;
+                const div = document.createElement('div');
+                div.className = 'result-item';
+                div.textContent = '📚 ' + nom + ' · ton poster dans MouFlanga';
+                div.addEventListener('click', async () => {
+                    if (div.classList.contains('active') && resultsDiv.classList.contains('collapsed')) { resultsDiv.classList.remove('collapsed'); return; }
+                    document.getElementById('postersLoading').classList.add('show');
+                    try {
+                        const res = await fetch('/api/mouflanga/reprendre', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({name: nom})});
+                        const rep = await res.json();
+                        if (rep.error) { showMessage(rep.error, 'error'); return; }
+                        selectedItem = {id: null, title: nom, original_title: '', media_type: 'tv', year: '?', libre: true};
+                        preremplirTitre(nom, true);
+                        allPosters = [];
+                        document.getElementById('langSelect').style.display = 'none';
+                        document.getElementById('layoutBar').innerHTML = '';
+                        const postersDiv = document.getElementById('posters');
+                        postersDiv.innerHTML = '';
+                        const poster = {url: rep.url, lang: '', upload: true};
+                        const img = document.createElement('img');
+                        img.src = rep.url;
+                        img.title = 'Poster actuel dans MouFlanga';
+                        img.className = 'poster-thumb';
+                        img.onclick = () => { selectPoster(poster); img.classList.add('selected'); };
+                        postersDiv.appendChild(img);
+                        selectPoster(poster);
+                        img.classList.add('selected');
+                        document.querySelectorAll('.result-item').forEach(el => el.classList.remove('active'));
+                        div.classList.add('active');
+                        resultsDiv.classList.add('collapsed');
+                        showMessage('Poster repris de MouFlanga : modifie-le ou renvoie-le', 'success');
+                    } catch (err) {
+                        showMessage('Erreur: ' + err.message, 'error');
+                    } finally {
+                        document.getElementById('postersLoading').classList.remove('show');
+                    }
                 });
                 resultsDiv.insertBefore(div, resultsDiv.firstChild);
             }
