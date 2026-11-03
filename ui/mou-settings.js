@@ -68,10 +68,10 @@ document.addEventListener('DOMContentLoaded', () => {
         '<div class="row"><button class="btn ghost" id="mouRedemarrer" type="button">🔄 Redémarrer l\'appli</button></div><div id="mouRedemarrerMsg"></div>';
     premier.parentNode.appendChild(p);
     $('mouRedemarrer').addEventListener('click', async () => {
-        if (!confirm('Redémarrer l\'appli maintenant ?')) return;
+        if (!await MouConfirm('Redémarrer l\'appli maintenant ?')) return;
         let r = await post('/api/redemarrer', {});
         if (!r.ok && r.occupe) {
-            if (!confirm(r.error + '\n\nRedémarrer quand même ?')) return;
+            if (!await MouConfirm(r.error + '\n\nRedémarrer quand même ?')) return;
             r = await post('/api/redemarrer', {forcer: true});
         }
         if (!r.ok) return say('mouRedemarrerMsg', r.error, false);

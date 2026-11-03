@@ -95,7 +95,7 @@
     });
     log.querySelectorAll('[data-extra]').forEach(function (b) {
       b.addEventListener('click', async function () {
-        var a = actions[b.dataset.extra]; if (a.confirm && !confirm(a.confirm)) return;
+        var a = actions[b.dataset.extra]; if (a.confirm && !(await MouConfirm(a.confirm))) return;
         var r = await post(a.url); status(r.message || r.error || 'Fait', r.error ? 'err' : 'ok');
       });
     });
@@ -192,6 +192,62 @@
       if (aVerifier.size && !minuterie) minuterie = setTimeout(verifier, 60);
     }).observe(document.body, {subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['class']});
   }
+
+  // ----- Fenêtres de dialogue aux couleurs du skin (remplacent confirm / alert / prompt du navigateur) -----
+  // await MouConfirm('Question ?', {ok: 'Supprimer', annuler: 'Non'}) -> true / false
+  // await MouAlert('Message')                                          -> rien
+  // await MouPrompt('Question', 'valeur par défaut', {type: 'password'}) -> texte, ou null si annulé
+  function dialogue(msg, opt) {
+    opt = opt || {};
+    return new Promise(function (fini) {
+      var fond = document.createElement('div');
+      fond.className = 'mou-modal show mou-dialogue';
+      var boite = document.createElement('div'); boite.className = 'mou-box narrow'; boite.setAttribute('role', 'dialog'); boite.setAttribute('aria-modal', 'true');
+      var p = document.createElement('div'); p.className = 'mou-dlg-msg'; p.textContent = String(msg == null ? '' : msg);
+      boite.appendChild(p);
+      var champ = null;
+      if (opt.saisie) {
+        champ = document.createElement('input'); champ.type = opt.type || 'text'; champ.value = opt.defaut || '';
+        champ.autocomplete = 'off'; champ.autocapitalize = 'off'; champ.spellcheck = false;
+        boite.appendChild(champ);
+      }
+      var rangee = document.createElement('div'); rangee.className = 'mou-actions-row';
+      var vue = document.activeElement, clos = false;
+      function sortir(val) { if (clos) return; clos = true; document.removeEventListener('keydown', touche, true); fond.remove(); try { vue && vue.focus && vue.focus(); } catch (e) {} fini(val); }
+      var bOk = document.createElement('button'); bOk.className = 'mou-btn'; bOk.type = 'button'; bOk.textContent = opt.ok || 'OK';
+      bOk.addEventListener('click', function () { sortir(opt.saisie ? champ.value : true); });
+      if (opt.annulable !== false) {
+        var bNon = document.createElement('button'); bNon.className = 'mou-btn ghost'; bNon.type = 'button'; bNon.textContent = opt.annuler || 'Annuler';
+        bNon.addEventListener('click', function () { sortir(opt.saisie ? null : false); });
+        rangee.appendChild(bNon);
+      }
+      rangee.appendChild(bOk); boite.appendChild(rangee); fond.appendChild(boite);
+      function touche(e) {
+        if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); sortir(opt.annulable === false ? true : opt.saisie ? null : false); }
+        else if (e.key === 'Enter' && (champ ? e.target === champ : true)) { e.stopPropagation(); e.preventDefault(); sortir(opt.saisie ? champ.value : true); }
+      }
+      document.addEventListener('keydown', touche, true);
+      if (opt.annulable !== false) fond.addEventListener('mousedown', function (e) { if (e.target === fond) sortir(opt.saisie ? null : false); });
+      document.body.appendChild(fond);
+      (champ || bOk).focus(); if (champ) champ.select();
+    });
+  }
+  window.MouConfirm = function (msg, opt) { return dialogue(msg, opt); };
+  window.MouAlert = function (msg, opt) { return dialogue(msg, Object.assign({annulable: false}, opt)).then(function () {}); };
+  window.MouPrompt = function (msg, defaut, opt) { return dialogue(msg, Object.assign({saisie: true, defaut: defaut == null ? '' : String(defaut)}, opt)); };
+
+  // <form data-confirme="Question ?"> : demande confirmation (fenêtre du skin) avant d'envoyer le formulaire
+  document.addEventListener('submit', function (e) {
+    var f = e.target;
+    if (!f.dataset || !f.dataset.confirme || f._mouOk) return;
+    e.preventDefault();
+    var qui = e.submitter;
+    MouConfirm(f.dataset.confirme).then(function (oui) {
+      if (!oui) return;
+      f._mouOk = true;
+      if (f.requestSubmit) f.requestSubmit(qui || undefined); else f.submit();
+    });
+  }, true);
 
   function init() { var host = $('mou-header'); if (host) build(host); surveiller(); }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();

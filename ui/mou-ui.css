@@ -54,7 +54,7 @@ body.mou-skin input[type=text]:focus, body.mou-skin input[type=number]:focus, bo
 body.mou-skin input[type=checkbox], body.mou-skin input[type=radio], body.mou-skin input[type=range] { accent-color:var(--accent); }
 body.mou-skin input[type=checkbox], body.mou-skin input[type=radio] { width:17px; height:17px; }
 .mou-note { padding:10px 12px; border-radius:4px; font-size:.9rem; margin:10px 0; }
-.mou-note.ok { background:rgba(82,181,75,.15); border:1px solid var(--accent); color:#c9efc5; }
+.mou-note.ok { background:color-mix(in srgb, var(--accent) 15%, transparent); border:1px solid var(--accent); color:var(--text); }
 .mou-note.err { background:rgba(229,83,75,.15); border:1px solid var(--err); color:#ffb4ae; }
 .mou-note.warn { background:rgba(229,168,75,.15); border:1px solid var(--warn); color:#f3d9a8; }
 .mou-panel { background:var(--card); border-radius:8px; padding:16px; }
@@ -112,7 +112,7 @@ body.mou-login { display:flex; align-items:center; justify-content:center; paddi
 
 /* Bulles de message (en bas de l'écran, au-dessus de tout) */
 .mou-toasts { position:fixed; left:50%; transform:translateX(-50%); bottom:calc(16px + env(safe-area-inset-bottom, 0px)); z-index:3000; display:flex; flex-direction:column; gap:8px; width:min(92vw, 520px); pointer-events:none; }
-.mou-toast { pointer-events:auto; padding:12px 16px; border-radius:10px; font-size:.95rem; line-height:1.4; color:#fff; background:#2b3a2a; border:1px solid #52b54b; box-shadow:0 8px 28px rgba(0,0,0,.55); cursor:pointer; animation:mouToastIn .2s ease-out; overflow-wrap:anywhere; }
+.mou-toast { pointer-events:auto; padding:12px 16px; border-radius:10px; font-size:.95rem; line-height:1.4; color:#fff; background:#2b3a2a; border:1px solid var(--accent); box-shadow:0 8px 28px rgba(0,0,0,.55); cursor:pointer; animation:mouToastIn .2s ease-out; overflow-wrap:anywhere; }
 .mou-toast.err { background:#3d2222; border-color:#e5534b; }
 .mou-toast.warn { background:#3b331f; border-color:#d9a43a; }
 .mou-toast.fin { opacity:0; transform:translateY(8px); transition:opacity .25s, transform .25s; }
@@ -138,3 +138,12 @@ body.mou-login { display:flex; align-items:center; justify-content:center; paddi
 .mou-modal .mou-box > .mou-actions-row { position:sticky; bottom:-18px; z-index:5; background:var(--card); padding:12px 0 6px; margin-top:12px; border-top:1px solid var(--line); }
 .mou-logo { width:40px; height:40px; flex:none; display:block; border-radius:10px; }
 a.mou-btn, a.btn { text-decoration:none; }
+
+/* Fenêtres de dialogue (MouConfirm / MouAlert / MouPrompt) : au-dessus des autres fenêtres */
+.mou-dialogue { z-index:2500; }
+.mou-dialogue .mou-box { max-width:440px; height:auto; }
+.mou-dlg-msg { white-space:pre-line; overflow-wrap:anywhere; line-height:1.45; margin-bottom:6px; }
+.mou-dialogue .mou-box input { margin-top:8px; }
+.mou-dialogue .mou-actions-row { justify-content:flex-end; position:static; border-top:0; padding-top:4px; }
+.mou-dialogue .mou-actions-row .mou-btn { flex:1 1 120px; }
+@media (max-width:800px) { .mou-dialogue { padding:16px; align-items:center; } .mou-dialogue .mou-box { max-width:440px; height:auto; border-radius:16px; } }
