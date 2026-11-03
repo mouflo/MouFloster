@@ -42,19 +42,6 @@ systemctl daemon-reload
 systemctl enable -q moufloster
 systemctl restart moufloster
 
-# 5. Mises à jour automatiques depuis GitHub (une ligne AJOUTÉE à la crontab)
-echo ""
-echo "⏱️  Mises à jour automatiques depuis GitHub :"
-echo "   1) chaque nuit à 5 h (conseillé)   2) chaque heure   3) chaque minute   4) jamais (à la main)"
-read -r -p "   Ton choix [1] : " freq || freq=""
-case "$freq" in
-    2) f=heure ;;
-    3) f=minute ;;
-    4) f=jamais ;;
-    *) f=nuit ;;
-esac
-bash setup-cronjob.sh "$f"
-
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 echo ""
 echo "✅ Installation terminée !"

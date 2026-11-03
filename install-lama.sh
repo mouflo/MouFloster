@@ -1,5 +1,5 @@
 #!/bin/bash
-# Installe LaMa (effacement de qualité, sur le processeur). Lancé AUTOMATIQUEMENT par deploy.sh, une seule fois.
+# Installe LaMa (effacement de qualité, sur le processeur). Lancé à la main : bash install-lama.sh.
 # Rien à faire à la main. Journal: data/lama-install.log
 DIR="$(cd "$(dirname "$0")" && pwd)"
 PY="$DIR/venv/bin/python"
