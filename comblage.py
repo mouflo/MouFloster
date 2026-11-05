@@ -23,6 +23,9 @@ FIABILITE_MIN = 0.45           # part des pixels voisins qui concordent pour fai
 LISSAGE_ACCORD = 12            # lissage (px) de la carte de concordance avant de la prolonger dans la zone à combler
 DISTANCE_MAX = 260             # au-delà de cette distance (px) du bord de la zone, aucune transformation n'est crue
 MARGE = 160                    # zone de travail autour de la zone peinte
+RAYON_REPERES = 250            # les corrections (angle, netteté, couleur) se calent sur les pixels à moins de ce rayon (px) de la zone peinte
+AFFINER, NETTETE, COULEUR, RACCORD = True, True, True, True        # chaque correction peut être coupée (essais de mesure)
+MODE_COULEUR = "cases"         # « cases » (selon la nuance), « polynome » (courbe globale) ou « decalage » (un seul décalage moyen)
 
 
 def _petit(arr, cote):
@@ -68,6 +71,162 @@ def transformations(poster, masque, source):
     return sortie
 
 
+def _gris(a):
+    return cv2.cvtColor(np.ascontiguousarray(a, dtype=np.float32), cv2.COLOR_RGB2GRAY)
+
+
+def _erreur(P, W, zone):
+    """Écart moyen (0-255, coupé à 60 pour ignorer les vraies différences de contenu) entre deux images sur une zone."""
+    if not zone.any():
+        return 0.0
+    return float(np.minimum(np.abs(P - W).max(axis=2)[zone], 60).mean())
+
+
+def _affiner(P, Wk, cov, zone):
+    """Petite correction affine (angle, échelle, cisaillement, décalage) de la 2e image remise en place pour qu'elle colle au poster
+    autour de la zone peinte (la transformation globale est parfois un peu fausse à cet endroit). Gardée seulement si l'écart diminue.
+    Renvoie (image, couverture, corrigée ?)."""
+    if zone.sum() < 800:
+        return Wk, cov, False
+    h, w = Wk.shape[:2]
+    s = 0.5
+    g1 = cv2.resize(_gris(P), None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+    g2 = cv2.resize(_gris(Wk), None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+    mz = cv2.resize(zone.astype(np.uint8), (g1.shape[1], g1.shape[0]), interpolation=cv2.INTER_NEAREST)
+    R = np.eye(2, 3, dtype=np.float32)
+    try:
+        _, R = cv2.findTransformECC(g1, g2, R, cv2.MOTION_AFFINE, (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 80, 1e-5), mz, 5)
+    except cv2.error:
+        return Wk, cov, False
+    R[:, 2] /= s                                                           # décalage en pleine résolution
+    if abs(R[0, 0] - 1) > 0.08 or abs(R[1, 1] - 1) > 0.08 or abs(R[0, 1]) > 0.08 or abs(R[1, 0]) > 0.08 or abs(R[0, 2]) > 30 or abs(R[1, 2]) > 30:
+        return Wk, cov, False
+    flags = cv2.INTER_CUBIC | cv2.WARP_INVERSE_MAP
+    W2 = cv2.warpAffine(Wk, R, (w, h), flags=flags, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
+    c2 = cv2.warpAffine(cov.astype(np.uint8) * 255, R, (w, h), flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP) > 250
+    z = zone & c2 & cov
+    if _erreur(P, W2.astype(np.float32), z) < 0.97 * _erreur(P, Wk.astype(np.float32), z):
+        return W2, c2, True
+    return Wk, cov, False
+
+
+def _nettete(P, Wk, zone):
+    """Flou à ajouter à la 2e image pour avoir la même netteté que le poster (le poster a souvent été réduit ou compressé)."""
+    if zone.sum() < 800:
+        return Wk
+    Wf = Wk.astype(np.float32)
+    meilleur, sigma = _erreur(P, Wf, zone), 0.0
+    for sig in (0.7, 1.0, 1.4, 2.0, 2.8):
+        e = _erreur(P, cv2.GaussianBlur(Wf, (0, 0), sig), zone)
+        if e < meilleur * 0.98:
+            meilleur, sigma = e, sig
+    return cv2.GaussianBlur(Wf, (0, 0), sigma) if sigma else Wf
+
+
+def _traits(x):
+    r, g, b = x[..., 0], x[..., 1], x[..., 2]
+    return np.stack([np.ones_like(r), r, g, b, r * r, g * g, b * b, r * g, r * b, g * b], axis=-1)
+
+
+def _couleur(P, Wk, zone, decal_secours):
+    """Courbe de couleur complète (polynôme de degré 2 sur R, V, B) qui fait ressembler la 2e image au poster, apprise sur les pixels
+    voisins qui se correspondent : corrige teinte, saturation et clarté DIFFÉREMMENT selon les couleurs (le crème d'une jupe, le noir d'un
+    manteau…), là où un simple décalage moyen donnerait une jupe grise. Retombe sur le décalage médian s'il y a trop peu de pixels."""
+    Wf = Wk.astype(np.float32) if Wk.dtype != np.float32 else Wk
+    ys, xs = np.where(zone)
+    if len(ys) < 600:
+        return np.clip(Wf + decal_secours, 0, 255)
+    if len(ys) > 50000:
+        pick = np.random.default_rng(1).choice(len(ys), 50000, replace=False)
+        ys, xs = ys[pick], xs[pick]
+    X = Wf[ys, xs] / 255.0
+    Y = P[ys, xs] / 255.0
+    F = _traits(X)
+    keep = np.ones(len(F), bool)
+    coef = None
+    for _ in range(3):                                                         # on écarte les pixels qui ne sont pas vraiment les mêmes
+        A = F[keep].T @ F[keep] + 1e-2 * len(F[keep]) * np.eye(F.shape[1], dtype=np.float32) * 1e-2
+        coef = np.linalg.solve(A, F[keep].T @ Y[keep])
+        res = np.linalg.norm(F @ coef - Y, axis=1)
+        seuil = max(0.04, 2.5 * float(np.median(res[keep])))
+        keep = res < seuil
+        if keep.sum() < 400:
+            return np.clip(Wf + decal_secours, 0, 255)
+    sortie = _traits(np.clip(Wf / 255.0, 0, 1)) @ coef
+    return np.clip(sortie * 255.0, 0, 255).astype(np.float32)
+
+
+def _lab(rgb):
+    return cv2.cvtColor(np.clip(rgb, 0, 255).astype(np.float32) / 255.0, cv2.COLOR_RGB2LAB)
+
+
+def _lisser3d(a):
+    """Lissage gaussien (5 points) d'un tableau 3D, axe par axe."""
+    k = np.array([1, 4, 6, 4, 1], np.float32) / 16.0
+    for axe in range(3):
+        p = np.pad(a, [(2, 2) if i == axe else (0, 0) for i in range(3)], mode="edge")
+        sl = lambda d: tuple(slice(d, d + a.shape[axe]) if i == axe else slice(None) for i in range(3))
+        a = sum(k[d] * p[sl(d)] for d in range(5))
+    return a
+
+
+def _couleur_cases(P, Wk, zone, decal_secours):
+    """Correction de couleur qui dépend de la couleur d'origine : pour chaque nuance de la 2e image (en Lab : clarté, vert-rouge,
+    bleu-jaune), le décalage moyen constaté sur les pixels voisins qui se correspondent et ont CETTE nuance. Un crème de jupe est corrigé
+    comme le crème de la jupe voisine, un noir de manteau comme le noir du manteau : pas de jupe grise ni de teinte qui bave d'une couleur
+    sur l'autre. Les nuances sans voisin servent des nuances proches (lissage), sinon le décalage moyen."""
+    Wf = Wk.astype(np.float32)
+    ys, xs = np.where(zone)
+    if len(ys) < 600:
+        return np.clip(Wf + decal_secours, 0, 255)
+    labW, labP = _lab(Wf), _lab(P)
+    # cases : L par 5 (0-100), a et b par 5 (-64 à 64)
+    def cases(lab):
+        i = np.clip((lab[..., 0] / 5.0).astype(np.int32), 0, 20)
+        j = np.clip(((lab[..., 1] + 64) / 5.0).astype(np.int32), 0, 25)
+        k = np.clip(((lab[..., 2] + 64) / 5.0).astype(np.int32), 0, 25)
+        return i, j, k
+    i, j, k = cases(labW[ys, xs][None])
+    i, j, k = i[0], j[0], k[0]
+    delta = labP[ys, xs] - labW[ys, xs]
+    forme = (21, 26, 26)
+    flat = (i * forme[1] + j) * forme[2] + k
+    n = np.bincount(flat, minlength=int(np.prod(forme))).astype(np.float32).reshape(forme)
+    somme = np.stack([np.bincount(flat, weights=delta[:, c], minlength=int(np.prod(forme))).astype(np.float32).reshape(forme) for c in range(3)], axis=-1)
+    ns = _lisser3d(n)
+    ss = np.stack([_lisser3d(somme[..., c]) for c in range(3)], axis=-1)
+    global_med = np.median(delta, axis=0).astype(np.float32)
+    table = np.where(ns[..., None] > 4.0, ss / np.maximum(ns[..., None], 1e-6), global_med)
+    table = np.clip(table, [-30, -25, -25], [30, 25, 25])
+    # lecture de la table par interpolation continue entre les 8 cases voisines (pas de paliers visibles dans les dégradés)
+    fi = np.clip(labW[..., 0] / 5.0, 0, 20 - 1e-4)
+    fj = np.clip((labW[..., 1] + 64) / 5.0, 0, 25 - 1e-4)
+    fk = np.clip((labW[..., 2] + 64) / 5.0, 0, 25 - 1e-4)
+    i0, j0, k0 = fi.astype(np.int32), fj.astype(np.int32), fk.astype(np.int32)
+    ti, tj, tk = (fi - i0)[..., None], (fj - j0)[..., None], (fk - k0)[..., None]
+    corr = 0.0
+    for di in (0, 1):
+        for dj in (0, 1):
+            for dk in (0, 1):
+                poids = (ti if di else 1 - ti) * (tj if dj else 1 - tj) * (tk if dk else 1 - tk)
+                corr = corr + poids * table[np.minimum(i0 + di, 20), np.minimum(j0 + dj, 25), np.minimum(k0 + dk, 25)]
+    out = labW + corr
+    out[..., 0] = np.clip(out[..., 0], 0, 100)
+    rgb = cv2.cvtColor(out.astype(np.float32), cv2.COLOR_LAB2RGB) * 255.0
+    return np.clip(rgb, 0, 255).astype(np.float32)
+
+
+def _raccord(P, M, zone_ring, trou):
+    """Reste de différence de teinte entre le poster et la 2e image corrigée, mesuré juste autour de la zone, étalé en douceur dans la zone :
+    la zone collée se raccorde au poster sans bord visible. Renvoie le champ de correction (h, w, 3)."""
+    poids = zone_ring.astype(np.float32)
+    diff = (P - M) * poids[..., None]
+    num = cv2.GaussianBlur(diff, (0, 0), 30)
+    den = cv2.GaussianBlur(poids, (0, 0), 30)[..., None]
+    champ = np.where(den > 0.02, num / np.maximum(den, 1e-6), 0.0)
+    return np.clip(champ, -35, 35).astype(np.float32)
+
+
 def _prolonger(carte, valide):
     """Chaque point prend la valeur du point valide LE PLUS PROCHE : un trou au milieu du personnage hérite de la concordance du personnage
     qui l'entoure, un trou sur le fond hérite de celle du fond (où la 2e image ne ressemble pas au poster)."""
@@ -103,6 +262,7 @@ def combler(poster, masque, source):
     modeles = transformations(poster, masque, source)
     if not modeles:
         return vides
+    d_trou = cv2.distanceTransform((~trou).astype(np.uint8), cv2.DIST_L2, 5)
     decale = np.array([[1, 0, -x0], [0, 1, -y0], [0, 0, 1.0]])
     un = np.full(source.shape[:2], 255, np.uint8)
     fiabilites, images, couvertures = [], [], []
@@ -111,6 +271,11 @@ def combler(poster, masque, source):
         Wk = cv2.warpAffine(source, Mr, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
         cov = cv2.warpAffine(un, Mr, (w, h), flags=cv2.INTER_LINEAR) > 250
         cov = cv2.erode(cov.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+        pres = cov & loin & (d_trou < RAYON_REPERES)                         # pixels voisins de la zone, où l'on peut comparer
+        if AFFINER:
+            Wk, cov, _ = _affiner(P, Wk, cov, pres)
+            cov = cv2.erode(cov.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+            pres = cov & loin & (d_trou < RAYON_REPERES)
         Wf = cv2.GaussianBlur(Wk.astype(np.float32), (0, 0), 1.5)
         ecart = np.abs(Pf - Wf).max(axis=2)
         valide = cov & loin                                                   # là où on peut comparer : source présente, hors de la zone peinte
@@ -118,15 +283,24 @@ def combler(poster, masque, source):
         lisse = cv2.GaussianBlur(accord, (0, 0), LISSAGE_ACCORD) / np.maximum(cv2.GaussianBlur(valide.astype(np.float32), (0, 0), LISSAGE_ACCORD), 1e-6)
         fiab = _prolonger(lisse, valide)
         fiab[~cov] = 0.0
-        # recalage de couleur : décalage médian entre les deux images là où elles concordent
-        zone = (accord > 0)
-        if zone.sum() > 200:
-            decal = np.median((P - Wk.astype(np.float32))[zone], axis=0)
-            decal = np.clip(decal, -25, 25)
+        # même rendu que le poster : netteté, couleurs (courbe complète), puis raccord des teintes avec le pourtour de la zone
+        zone = pres & (ecart < 90)                                            # voisins qui se correspondent (large : la couleur peut différer)
+        decal = np.zeros(3, np.float32)
+        if (accord > 0).sum() > 200:
+            decal = np.clip(np.median((P - Wk.astype(np.float32))[accord > 0], axis=0), -25, 25)
+        img = Wk.astype(np.float32)
+        if NETTETE:
+            img = _nettete(P, img, zone)
+        if not COULEUR or MODE_COULEUR == "decalage":
+            img = np.clip(img + decal, 0, 255)
+        elif MODE_COULEUR == "polynome":
+            img = _couleur(P, img, zone, decal)
         else:
-            decal = np.zeros(3, np.float32)
+            img = _couleur_cases(P, img, zone & (d_trou < 110), decal)
+        if RACCORD:
+            img = np.clip(img + _raccord(P, img, zone & (d_trou < 70), trou), 0, 255)
         fiabilites.append(fiab)
-        images.append(np.clip(Wk.astype(np.float32) + decal, 0, 255))
+        images.append(img.astype(np.float32))
         couvertures.append(cov)
     S = np.stack(fiabilites)
     meilleur = S.argmax(axis=0)

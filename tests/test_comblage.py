@@ -76,6 +76,30 @@ class CombleTest(unittest.TestCase):
         self.assertGreater(r["rapport"]["morceaux"][0]["points"], 10)
         self.assertAlmostEqual(r["rapport"]["morceaux"][0]["echelle"], 1.3, delta=0.08)
 
+    def test_la_couleur_du_poster_est_reprise_meme_retouchee(self):
+        """Le poster a été étalonné autrement que la 2e image (teinte, saturation, clarté, différemment selon les couleurs) : les morceaux
+        recopiés doivent avoir les couleurs du POSTER, pas celles de la source."""
+        def lab(a):
+            return cv2.cvtColor(a.astype(np.float32) / 255.0, cv2.COLOR_RGB2LAB)
+        x = self.vrai.astype(np.float32) / 255.0
+        gradue = np.clip(np.stack([x[..., 0] ** 0.8 * 1.10, x[..., 1] ** 1.1 * 0.92, x[..., 2] ** 0.9 * 0.80 + 0.04], axis=-1), 0, 1)
+        vrai = np.where(self.alpha[..., None], (gradue * 255).astype(np.uint8), self.vrai)           # seul le personnage est retouché
+        poster = vrai.copy()
+        poster[self.masque > 0] = 255
+        zone = (self.masque > 0) & self.alpha
+        erreurs = {}
+        try:
+            for mode in ("decalage", "cases"):
+                comblage.MODE_COULEUR = mode
+                r = comblage.combler(poster, self.masque, self.source)
+                ok = zone & (r["reste"] == 0)
+                self.assertGreater(int(ok.sum()), 1500)
+                erreurs[mode] = float(np.median(np.linalg.norm(lab(r["image"]) - lab(vrai), axis=2)[ok]))
+        finally:
+            comblage.MODE_COULEUR = "cases"
+        self.assertLess(erreurs["cases"], 6.0)                                      # à peine visible
+        self.assertLess(erreurs["cases"], 0.8 * erreurs["decalage"])                # nettement mieux qu'un simple décalage moyen
+
     def test_le_reste_est_rendu_a_l_effaceur_et_la_partie_collee_n_en_fait_pas_partie(self):
         r = comblage.combler(self.poster, self.masque, self.source)
         self.assertTrue((r["reste"][self.masque == 0] == 0).all())               # jamais hors de la zone peinte
