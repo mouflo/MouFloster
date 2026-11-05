@@ -628,24 +628,112 @@ def _dossier_de_la_serie(media_type, tmdb_id, titles, year):
     return None
 
 
+_CACHE_REFS = {}                     # (type, id, cible) -> (instant, refs, message) : la recherche des modèles ne se refait pas à chaque lot
+
+
+def _parts_de_la_saga(media_type, tmdb_id):
+    """Films de la saga d'un film (ou d'une saga TMDB) : [{id, title, original_title, year}] du plus ancien au plus récent."""
+    cid = tmdb_id
+    if media_type == "movie":
+        r = tmdb_get(f"https://api.themoviedb.org/3/movie/{tmdb_id}")
+        r.raise_for_status()
+        cid = ((r.json() or {}).get("belongs_to_collection") or {}).get("id")
+        if not cid:
+            return []
+    r = tmdb_get(f"https://api.themoviedb.org/3/collection/{cid}", {"language": "fr-FR"})
+    r.raise_for_status()
+    parts = sorted((r.json() or {}).get("parts") or [], key=lambda p: p.get("release_date") or "9999")
+    return [{"id": p.get("id"), "title": p.get("title") or "", "original_title": p.get("original_title") or "",
+             "year": _to_int((p.get("release_date") or "")[:4])} for p in parts if p.get("id")]
+
+
+def _references_de(media_type, tmdb_id, titles, year, season_text):
+    """Posters modèles à suivre pour ce titre : (refs, message, cible).
+    Série : les posters du dossier de la série (sauf celui qu'on refait). Film d'une saga, ou saga : les posters des AUTRES films
+    de la saga qui sont dans la médiathèque. Gardé 10 minutes."""
+    cible = library.target_name("tv", season_text) if media_type == "tv" else "poster.jpg"
+    cle = (media_type, tmdb_id, cible)
+    memo = _CACHE_REFS.get(cle)
+    if memo and time.monotonic() - memo[0] < 600:
+        return memo[1], memo[2], cible
+    refs, message = [], ""
+    try:
+        if media_type == "tv":
+            rel = _dossier_de_la_serie("tv", tmdb_id, titles, year)
+            if not rel:
+                message = "Dossier de la série introuvable dans la médiathèque : pas de comparaison."
+            else:
+                refs = coherence.posters_existants(rel, cible)
+                if not refs:
+                    message = "Aucun poster déjà présent dans le dossier de cette série : rien à comparer."
+        else:
+            parts = _parts_de_la_saga(media_type, tmdb_id)
+            if not parts:
+                message = "Ce film n'appartient à aucune saga : rien à comparer."
+            for part in parts[:14]:
+                if media_type == "movie" and part["id"] == tmdb_id:
+                    continue                                         # le film dont on refait le poster ne sert pas de modèle
+                rel = _dossier_de_la_serie("movie", part["id"], [t for t in (part["title"], part["original_title"]) if t], part["year"])
+                dossier = library.resolve_folder(rel) if rel else None
+                if dossier is not None and (dossier / "poster.jpg").is_file():
+                    refs.append({"rel": rel, "name": "poster.jpg", "label": part["title"] + (f" ({part['year']})" if part["year"] else "")})
+            if parts and not refs:
+                message = "Aucun autre film de la saga n'a de poster dans ta médiathèque : rien à comparer."
+    except Exception as e:
+        logger.info("Modèles de poster : %s", diag.redact(str(e)))
+        refs, message = [], "Saga ou dossier illisible pour le moment (TMDB ou médiathèque) : pas de comparaison."
+    if len(_CACHE_REFS) > 200:
+        _CACHE_REFS.clear()
+    _CACHE_REFS[cle] = (time.monotonic(), refs, message)
+    return refs, message, cible
+
+
+def _lire_titre_de(data):
+    titles = [t for t in (data.get("title"), data.get("original_title")) if t]
+    return data.get("media_type"), _to_int(data.get("tmdb_id")), titles, _to_int(data.get("year")), data.get("season_text")
+
+
 @app.route("/api/coherence", methods=["POST"])
 def api_coherence():
-    """🎯 Posters proposés par TMDB classés selon leur ressemblance avec ceux déjà présents dans le dossier de la série.
+    """🎯 Posters proposés par TMDB classés selon leur ressemblance avec les posters déjà présents dans la médiathèque :
+    posters du dossier de la série, ou des autres films de la saga. L'interface l'appelle par lots de 10 posters (barre de progression).
     POST {media_type, tmdb_id, title, original_title, year, season_text, posters: [{path, lang}]}.
-    Réponse : {rel, refs: [{name, label}], scores: {chemin TMDB: {score, raison, texte, rang}}} ; rien n'est modifié."""
+    Réponse : {refs: [{rel, name, label}], scores: {chemin TMDB: {score, raison, texte, rang}}, message} ; rien n'est modifié."""
     data = request.get_json(silent=True) or {}
-    if data.get("media_type") != "tv":
-        return jsonify({"rel": None, "refs": [], "scores": {}, "message": "Comparaison prévue pour les séries."})
+    media_type, tmdb_id, titles, year, saison = _lire_titre_de(data)
+    if media_type not in ("tv", "movie", "collection") or not tmdb_id:
+        return jsonify({"refs": [], "scores": {}, "message": ""})
     if not library.LIBRARY_ROOT.is_dir():
-        return jsonify({"rel": None, "refs": [], "scores": {}, "message": "Médiathèque introuvable."})
-    titles = [t for t in (data.get("title"), data.get("original_title")) if t]
-    rel = _dossier_de_la_serie("tv", _to_int(data.get("tmdb_id")), titles, _to_int(data.get("year")))
-    if not rel:
-        return jsonify({"rel": None, "refs": [], "scores": {}, "message": "Dossier de la série introuvable dans la médiathèque : pas de comparaison."})
-    cible = library.target_name("tv", data.get("season_text"))
+        return jsonify({"refs": [], "scores": {}, "message": "Médiathèque introuvable."})
+    refs, message, cible = _references_de(media_type, tmdb_id, titles, year, saison)
     posters = [p for p in (data.get("posters") or []) if isinstance(p, dict)]
-    resultat = coherence.classer(rel, cible, posters, _telecharger_tmdb)
-    return jsonify({"rel": rel, "cible": cible, **resultat})
+    resultat = coherence.classer(refs, posters, _telecharger_tmdb)
+    return jsonify({**resultat, "message": message if not resultat["refs"] else "", "cible": cible})
+
+
+@app.route("/api/coherence/aligner", methods=["POST"])
+def api_coherence_aligner():
+    """🎯 Cadrages proposés (zoom + position) pour que le personnage ou le groupe du poster choisi soit au même endroit et à la même
+    taille que sur les posters modèles. POST {…comme /api/coherence…, poster_url, border_style}.
+    Réponse : {propositions: [{mode, zoom, crop_x, crop_y, ecart_haut, ecart_centre, bords_flous, sur, conseille}], modeles, message}.
+    Rien n'est appliqué : l'interface montre l'aperçu."""
+    data = request.get_json(silent=True) or {}
+    media_type, tmdb_id, titles, year, saison = _lire_titre_de(data)
+    if media_type not in ("tv", "movie", "collection") or not tmdb_id or not data.get("poster_url"):
+        return jsonify({"propositions": [], "modeles": 0, "message": ""})
+    refs, message, _ = _references_de(media_type, tmdb_id, titles, year, saison)
+    mesures = coherence.modeles_mesures(refs) if refs else []
+    cible = coherence.resume_modeles(mesures)
+    if cible is None:
+        return jsonify({"propositions": [], "modeles": 0, "message": message or "Je n'ai pas réussi à repérer le personnage sur tes posters modèles."})
+    img = load_source_image(str(data.get("poster_url")), "w500")
+    if not img:
+        return jsonify({"propositions": [], "modeles": cible["n"], "message": "Impossible de charger ce poster."})
+    propositions = coherence.proposer(img, cible, _bordure(data.get("border_style")), conseille=coherence.conseiller(cible))
+    if not propositions:
+        return jsonify({"propositions": [], "modeles": cible["n"], "message": "Je n'ai pas réussi à repérer le personnage sur ce poster : cadre-le à la main."})
+    return jsonify({"propositions": propositions, "modeles": cible["n"], "message": "",
+                    "regulier": bool(cible["ecarts"]["haut"] <= 0.12)})
 
 
 @app.route("/api/upload", methods=["POST"])
@@ -2265,6 +2353,16 @@ HTML_TEMPLATE = """
         .coh-ref img { width: 64px; aspect-ratio: 2/3; object-fit: cover; border-radius: 5px; border: 1px solid var(--line); display: block; margin-bottom: 2px; }
         .coh-titre { font-size: 12px; color: var(--text2); }
         .coh-info { font-size: 13px; color: var(--text2); margin: 2px 0 8px; line-height: 1.35; }
+        .coh-progres { margin: 6px 0 8px; font-size: 13px; color: var(--text2); }
+        .coh-progres .barre { height: 8px; border-radius: 4px; background: var(--field); overflow: hidden; margin-top: 4px; }
+        .coh-progres .barre i { display: block; height: 100%; width: 3%; background: var(--accent); transition: width 0.4s; }
+        .coh-progres.indet .barre i { width: 35%; animation: coh-va-et-vient 1.1s ease-in-out infinite alternate; }
+        @keyframes coh-va-et-vient { from { margin-left: 0; } to { margin-left: 65%; } }
+        .coh-align { margin: 4px 0 8px; }
+        .coh-propo { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+        .coh-propo button { flex: 1 1 140px; font-size: 14px; padding: 10px 8px; }
+        .coh-propo button.conseille { border-color: var(--accent); }
+        .coh-propo button.applique { background: var(--accent); color: #fff; }
         .poster-cell { position: relative; }
         .poster-cell .coh-badge { position: absolute; left: 5px; right: 5px; bottom: 8px; padding: 1px 3px; border-radius: 4px; background: rgba(0, 0, 0, 0.75); color: #fff; font-size: 10px; line-height: 1.25; text-align: center; pointer-events: none; }
         .text-layer label, .checkbox-item label, .lib-field label, .erase-size { color: var(--text2); }
@@ -2367,8 +2465,14 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                     </div>
                     <div class="upload-astuce">Pas d'affiche trouvée (manga sans anime…) ? Tape juste le nom dans la recherche, puis « ⬆️ Envoyer mon image » ou glisse l’image sur la page.</div>
                     <div id="layoutBar"></div>
+                    <div id="cohProgres" class="coh-progres" hidden><span></span><div class="barre"><i></i></div></div>
                     <div id="cohBande" class="coh-bande" hidden></div>
                     <div id="cohInfo" class="coh-info" hidden></div>
+                    <div id="cohAlign" class="coh-align" hidden>
+                        <div class="checkbox-item"><input type="checkbox" id="cohAuto" checked /><label for="cohAuto">🎯 Aligner automatiquement le personnage quand je choisis un poster</label></div>
+                        <div id="cohPropo" class="coh-propo"></div>
+                        <div id="cohAlignEtat" class="coh-info" hidden></div>
+                    </div>
                     <div class="loading" id="postersLoading">Chargement...</div>
                     <div id="posters" class="results"></div>
                 </div>
@@ -2915,6 +3019,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                 img.onclick = () => {
                     selectPoster(poster);
                     img.classList.add('selected');
+                    cohAligner(poster);                                  // 🎯 propose (et applique si coché) le cadrage qui colle à la série
                 };
                 const note = notes[poster.path];
                 if (note && coherence.refs.length) {
@@ -2933,10 +3038,14 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             });
         }
 
-        // ===== 🎯 Cohérence : posters déjà dans la médiathèque pour cette série, posters proposés classés par ressemblance =====
-        let coherence = null;                 // {rel, refs: [{name, label}], scores: {chemin TMDB: {score, rang, raison, texte, proche_de}}}
+        // ===== 🎯 Cohérence : posters déjà dans la médiathèque (série ou saga), classement par ressemblance, alignement du personnage =====
+        let coherence = null;                 // {refs: [{rel, name, label}], scores: {chemin TMDB: {score, rang, raison, texte, proche_de}}, message}
         let cohTriActif = true;
-        let cohJeton = 0, cohMinuteur = null;
+        let cohJeton = 0, cohJetonAlign = 0, cohMinuteur = null;
+        let cohAuto = true;
+        try { cohAuto = localStorage.getItem('mfCohAuto') !== '0'; } catch (e) {}
+        const cohLibelles = {largeur: '↔️ Même largeur', hauteur: '↕️ Même hauteur', tete: '🙂 Même place de la tête'};
+        const cohTypes = ['tv', 'movie', 'collection'];
         function cohTexteCourt(t) {
             return {sans: '✅ sans texte', facile: '🧽 texte facile à effacer', moyen: '🧽 texte moyen', difficile: '⚠️ texte difficile'}[t] || '';
         }
@@ -2952,18 +3061,31 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             if (!document.getElementById('seasonEnabled').checked) return '';
             return document.getElementById('season').value;
         }
+        function cohBase(item) {
+            return {media_type: item.media_type, tmdb_id: item.id, title: item.title, original_title: item.original_title || '', year: item.year, season_text: cohSaison()};
+        }
+        // Barre de progression : pct = null → travail en cours sans pourcentage (barre qui va et vient) ; texte vide → cachée
+        function cohProgres(texte, pct) {
+            const z = document.getElementById('cohProgres');
+            if (!texte) { z.hidden = true; return; }
+            z.hidden = false;
+            z.querySelector('span').textContent = texte;
+            z.classList.toggle('indet', pct === null || pct === undefined);
+            z.querySelector('i').style.width = (pct === null || pct === undefined) ? '' : Math.max(3, Math.min(100, pct)) + '%';
+        }
         function cohDessiner() {
             const bande = document.getElementById('cohBande'), info = document.getElementById('cohInfo'), bouton = document.getElementById('cohTri');
-            bande.innerHTML = ''; bande.hidden = true; bouton.hidden = true;
+            const align = document.getElementById('cohAlign');
+            bande.innerHTML = ''; bande.hidden = true; bouton.hidden = true; align.hidden = true;
             if (!coherence) { info.hidden = true; return; }
             if (!coherence.refs.length) {
-                info.textContent = coherence.message || (coherence.rel ? 'Aucun poster déjà présent dans le dossier de cette série : rien à comparer.' : '');
+                info.textContent = coherence.message || '';
                 info.hidden = !info.textContent;
                 return;
             }
             const titre = document.createElement('div');
             titre.className = 'coh-titre';
-            titre.textContent = '📚 Déjà dans ta médiathèque pour cette série (le style à suivre)';
+            titre.textContent = '📚 Déjà dans ta médiathèque (le style à suivre)';
             bande.appendChild(titre);
             const rangee = document.createElement('div');
             rangee.className = 'coh-refs';
@@ -2973,7 +3095,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                 d.className = 'coh-ref';
                 const im = document.createElement('img');
                 im.alt = r.label;
-                im.src = '/api/library/file?rel=' + encodeURIComponent(coherence.rel) + '&name=' + encodeURIComponent(r.name);
+                im.src = '/api/library/file?rel=' + encodeURIComponent(r.rel) + '&name=' + encodeURIComponent(r.name);
                 d.appendChild(im);
                 d.appendChild(document.createTextNode(r.label));
                 rangee.appendChild(d);
@@ -2981,6 +3103,8 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             bande.hidden = false;
             bouton.hidden = false;
             bouton.textContent = cohTriActif ? '🎯 Trié par ressemblance' : '↕️ Ordre TMDB';
+            align.hidden = false;
+            document.getElementById('cohAuto').checked = cohAuto;
             info.textContent = 'Touche un poster pour voir pourquoi il ressemble (ou pas). Le texte « facile à effacer » est une estimation.';
             info.hidden = false;
         }
@@ -2990,29 +3114,89 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             const info = document.getElementById('cohInfo');
             if (n) { info.textContent = '🎯 ' + cohPhrase(n); info.hidden = false; }
         }
+        async function cohAppel(url, corps) {
+            try {
+                const res = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(corps)});
+                return res.ok ? await res.json() : null;
+            } catch (e) { return null; }
+        }
         async function chargerCoherence(item) {
             const jeton = ++cohJeton;
-            if (!item || item.media_type !== 'tv' || !allPosters.length) { coherence = null; cohDessiner(); return; }
+            if (!item || item.libre || !cohTypes.includes(item.media_type) || !allPosters.length) { coherence = null; cohProgres(''); cohDessiner(); return; }
             const code = document.getElementById('langSelect').value || '';
             const memes = allPosters.filter(p => code === 'all' || p.lang === code);
             const autres = allPosters.filter(p => !memes.includes(p));
             const envoyes = memes.concat(autres).slice(0, 60).map(p => ({path: p.path, lang: p.lang || ''}));
-            let data = null;
-            try {
-                const res = await fetch('/api/coherence', {method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({media_type: item.media_type, tmdb_id: item.id, title: item.title, original_title: item.original_title || '',
-                                          year: item.year, season_text: cohSaison(), posters: envoyes})});
-                if (res.ok) data = await res.json();
-            } catch (e) { data = null; }
+            cohProgres('🎯 Recherche des posters déjà dans ta médiathèque…', null);
+            const base = cohBase(item);
+            let data = await cohAppel('/api/coherence', Object.assign({}, base, {posters: []}));
             if (jeton !== cohJeton || selectedItem !== item) return;       // un autre titre a été choisi entre-temps
-            coherence = data && data.refs ? data : null;
-            cohDessiner();
+            if (!data || !data.refs) { coherence = null; cohProgres(''); cohDessiner(); return; }
+            coherence = {refs: data.refs, scores: {}, message: data.message || ''};
+            cohDessiner();                                                 // la bande des modèles s'affiche tout de suite
+            if (!coherence.refs.length) { cohProgres(''); return; }
+            const total = envoyes.length;
+            for (let i = 0; i < total; i += 10) {                          // par lots de 10 : la barre avance vraiment
+                cohProgres('🎯 Comparaison avec tes posters… ' + i + ' / ' + total + ' (' + Math.round(100 * i / total) + ' %)', 100 * i / total);
+                const d = await cohAppel('/api/coherence', Object.assign({}, base, {posters: envoyes.slice(i, i + 10)}));
+                if (jeton !== cohJeton || selectedItem !== item) return;
+                if (d && d.scores) Object.assign(coherence.scores, d.scores);
+            }
+            cohProgres('');
             showPosters(document.getElementById('langSelect').value || 'all');
         }
         function cohPlanifier() {
             clearTimeout(cohMinuteur);
             cohMinuteur = setTimeout(() => { if (selectedItem) chargerCoherence(selectedItem); }, 700);
         }
+        function cohEtat(texte) {
+            const e = document.getElementById('cohAlignEtat');
+            e.textContent = texte || '';
+            e.hidden = !texte;
+        }
+        function cohAppliquer(p) {
+            const cx = document.getElementById('cropX'), cy = document.getElementById('cropY'), z = document.getElementById('zoom');
+            cx.value = Math.round(p.crop_x * 100);
+            cy.value = Math.round(p.crop_y * 100);
+            z.value = Math.round(p.zoom * 100);
+            document.getElementById('zoomVal').textContent = z.value;
+            document.querySelectorAll('#cohPropo button').forEach(b => b.classList.toggle('applique', b.dataset.mode === p.mode));
+            const avert = [];
+            if (p.bords_flous) avert.push('⚠️ le poster est plus petit que le cadre : des bords flous sont ajoutés');
+            if (Math.abs(p.ecart_haut) > 60) avert.push('⚠️ la tête ne peut pas rejoindre sa place (écart ' + Math.abs(p.ecart_haut) + ' px sur 1500) : pas assez d’image ' + (p.ecart_haut < 0 ? 'au-dessus' : 'en dessous'));
+            if (!p.sur) avert.push('⚠️ je ne suis pas sûre d’avoir bien repéré le personnage : vérifie');
+            cohEtat('✅ Cadrage appliqué : ' + cohLibelles[p.mode] + ', zoom ' + z.value + ' %.' + (avert.length ? ' ' + avert.join(' · ') : ' Ajuste avec les curseurs si besoin.'));
+            generatePreview();
+        }
+        async function cohAligner(poster) {
+            if (!coherence || !coherence.refs.length || !selectedItem) return;
+            const jeton = ++cohJetonAlign, item = selectedItem;
+            const propo = document.getElementById('cohPropo');
+            propo.innerHTML = '';
+            cohEtat('⏳ Je repère le personnage sur ce poster et je le compare à tes posters…');
+            const d = await cohAppel('/api/coherence/aligner', Object.assign({}, cohBase(item), {poster_url: poster.url, border_style: styleCadre()}));
+            if (jeton !== cohJetonAlign || selectedItem !== item) return;
+            if (!d || !d.propositions || !d.propositions.length) { cohEtat((d && d.message) || 'Alignement indisponible pour ce poster : cadre-le à la main.'); return; }
+            d.propositions.forEach(p => {
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'secondary' + (p.conseille ? ' conseille' : '');
+                b.dataset.mode = p.mode;
+                b.textContent = cohLibelles[p.mode] + (p.conseille ? ' ⭐' : '') + (p.acceptable ? '' : ' ⚠️');
+                b.title = 'Zoom ' + Math.round(p.zoom * 100) + ' %';
+                b.onclick = () => cohAppliquer(p);
+                propo.appendChild(b);
+            });
+            const meilleur = d.propositions.find(p => p.conseille) || d.propositions[0];
+            if (cohAuto && meilleur.acceptable) cohAppliquer(meilleur);
+            else if (cohAuto) cohEtat('Aucun cadrage automatique assez sûr pour ce poster (personnage trop différent de tes posters, ou pas assez d’image) : essaie une proposition ci-dessus, ou règle à la main.');
+            else cohEtat('Choisis un cadrage proposé (⭐ = conseillé d’après tes ' + d.modeles + ' poster(s)), ou règle à la main.');
+        }
+        document.getElementById('cohAuto').addEventListener('change', (e) => {
+            cohAuto = e.target.checked;
+            try { localStorage.setItem('mfCohAuto', cohAuto ? '1' : '0'); } catch (err) {}
+            if (cohAuto && selectedPoster) cohAligner(selectedPoster);
+        });
         document.getElementById('cohTri').addEventListener('click', () => {
             cohTriActif = !cohTriActif;
             cohDessiner();
