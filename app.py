@@ -57,6 +57,7 @@ except ImportError:
 
 import library
 import coherence   # 🎯 poster d'une saison : ressemblance avec les posters déjà dans la médiathèque
+import comblage    # 🩹 zone effacée comblée avec les morceaux d'une 2e image (mêmes personnages, autre montage)
 import mouflanga_link
 import emby
 import nouveautes   # 🆕 films, séries et saisons ajoutés dans Emby sans poster fait
@@ -777,10 +778,27 @@ def api_upload_file(name):
     return send_file(path, mimetype="image/jpeg")
 
 
-def inpaint_region(img: Image.Image, mask_img: Image.Image):
+def _masque_du_trace(mask_img: Image.Image, size, grossir=True):
+    """Tracé de l'utilisatrice (blanc = à effacer) → masque 0/255 à la taille de l'image, un peu élargi (halo, anti-crénelage).
+    Lève ValueError si rien n'a été peint."""
+    import numpy as np
+    import cv2
+    w, h = size
+    mask = np.array(mask_img.convert("L").resize((w, h), Image.Resampling.BILINEAR))
+    mask = (mask > 40).astype("uint8") * 255
+    if not mask.any():
+        raise ValueError("Rien n'a été peint : colorie d'abord la zone à effacer")
+    if grossir:
+        grow = max(3, int(min(w, h) * 0.005))
+        mask = cv2.dilate(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * grow + 1, 2 * grow + 1)))
+    return mask
+
+
+def inpaint_region(img: Image.Image, mask_img: Image.Image, grossir=True):
     """
     Efface la zone peinte et la remplit avec son environnement (comme un remplissage d'après le contenu).
     Retourne (image, moteur, note): LaMa si installé, sinon OpenCV (et la note dit pourquoi).
+    grossir=False : le masque est déjà définitif (zone restante après un comblage avec une 2e image).
     """
     import numpy as np
     import cv2
@@ -790,15 +808,8 @@ def inpaint_region(img: Image.Image, mask_img: Image.Image):
         img.thumbnail((4500, 4500))
     w, h = img.size
 
-    mask = np.array(mask_img.convert("L").resize((w, h), Image.Resampling.BILINEAR))
-    mask = (mask > 40).astype("uint8") * 255
-    if not mask.any():
-        raise ValueError("Rien n'a été peint : colorie d'abord la zone à effacer")
-
     # On élargit un peu la zone: les contours (halo, anti-crénelage) d'un logo dépassent toujours du tracé
-    grow = max(3, int(min(w, h) * 0.005))
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * grow + 1, 2 * grow + 1))
-    mask = cv2.dilate(mask, kernel)
+    mask = _masque_du_trace(mask_img, (w, h), grossir)
 
     note = ""
     try:
@@ -860,6 +871,70 @@ def api_erase():
     result.save(os.path.join(UPLOAD_DIR, name), quality=95)
     logger.info(f"🧽 Effacement ({engine}): {name} ({result.width}x{result.height})")
     return jsonify({"url": UPLOAD_URL_PREFIX + name, "w": result.width, "h": result.height, "engine": engine, "note": note})
+
+
+@app.route("/api/erase/combler", methods=["POST"])
+def api_erase_combler():
+    """🩹 Comble la zone peinte (texte, logo) avec les morceaux d'une 2e image des mêmes personnages, replacés un par un ;
+    ce que la 2e image ne couvre pas est comblé par l'effaceur habituel.
+    POST {poster_url, mask (PNG en data URL), source_url}. Réponse comme /api/erase + rapport {couvert, reste, morceaux}."""
+    import numpy as np
+    data = request.get_json(silent=True) or {}
+    mask_data = data.get("mask") or ""
+    if not mask_data.startswith("data:image/png;base64,") or len(mask_data) > 20_000_000:
+        return jsonify({"error": "Tracé invalide"}), 400
+    poster = load_source_image(data.get("poster_url") or "", "original")
+    source = load_source_image(data.get("source_url") or "", "original")
+    if not poster or not source:
+        return jsonify({"error": "Impossible de charger l'une des deux images"}), 400
+    try:
+        poster = poster.convert("RGB")
+        if max(poster.size) > 4500:
+            poster.thumbnail((4500, 4500))
+        source = source.convert("RGB")
+        source.thumbnail((3200, 3200))
+        mask_img = Image.open(BytesIO(base64.b64decode(mask_data.split(",", 1)[1])))
+        masque = _masque_du_trace(mask_img, poster.size)
+        res = comblage.combler(np.array(poster), masque, np.array(source))
+        rapport = res["rapport"]
+        if rapport["couvert"] < 5.0:
+            return jsonify({"error": "Cette image ne montre pas, à cet endroit, quelque chose qui correspond à ton poster : je ne peux pas la superposer. "
+                                     "Essaie une autre image, ou efface la zone avec « Effacer la zone coloriée ».", "rapport": rapport}), 422
+        result, engine, note = Image.fromarray(res["image"]), "2ᵉ image", ""
+        if (res["reste"] > 0).sum() > 40:                                  # le reste : l'effaceur, avec les morceaux collés comme contexte
+            result, engine2, note = inpaint_region(result, Image.fromarray(res["reste"]), grossir=False)
+            engine = "2ᵉ image + " + engine2
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.exception("Erreur comblage avec une 2e image")
+        return jsonify({"error": f"Comblage impossible: {e}"}), 500
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    name = uuid.uuid4().hex + ".jpg"
+    result.save(os.path.join(UPLOAD_DIR, name), quality=95)
+    logger.info(f"🩹 Comblage ({engine}): {rapport['couvert']} % par la 2e image, {rapport['reste']} % par l'effaceur → {name}")
+    return jsonify({"url": UPLOAD_URL_PREFIX + name, "w": result.width, "h": result.height, "engine": engine, "note": note, "rapport": rapport})
+
+
+@app.route("/api/backdrops", methods=["POST"])
+def api_backdrops():
+    """Fonds d'écran TheMovieDB d'un titre (images 16:9 des personnages, souvent sans texte) : sources possibles pour combler un poster.
+    POST {id, media_type}. Réponse : {backdrops: [{url, vignette, w, h, lang}]}, ceux sans texte d'abord."""
+    data = request.get_json(silent=True) or {}
+    tmdb_id, media_type = str(data.get("id") or ""), data.get("media_type")
+    if media_type not in ("movie", "tv", "collection") or not tmdb_id.isdigit():
+        return jsonify({"backdrops": []})
+    try:
+        r = tmdb_get(f"https://api.themoviedb.org/3/{media_type}/{tmdb_id}/images")
+        r.raise_for_status()
+        liste = r.json().get("backdrops") or []
+    except Exception as e:
+        logger.info("Fonds d'écran TMDB : %s", diag.redact(str(e)))
+        return jsonify({"backdrops": [], "error": "Fonds d'écran indisponibles sur TMDB"})
+    liste = [b for b in liste if b.get("file_path")]
+    liste.sort(key=lambda b: (bool(b.get("iso_639_1")), -(b.get("vote_average") or 0)))
+    return jsonify({"backdrops": [{"url": "https://image.tmdb.org/t/p/w1280" + b["file_path"], "vignette": "https://image.tmdb.org/t/p/w300" + b["file_path"],
+                                   "w": b.get("width"), "h": b.get("height"), "lang": b.get("iso_639_1") or ""} for b in liste[:30]]})
 
 
 @app.route("/api/decoupe", methods=["POST"])
@@ -2363,6 +2438,10 @@ HTML_TEMPLATE = """
         .coh-propo button { flex: 1 1 140px; font-size: 14px; padding: 10px 8px; }
         .coh-propo button.conseille { border-color: var(--accent); }
         .coh-propo button.applique { background: var(--accent); color: #fff; }
+        .combler-zone { margin: 8px 0; }
+        .combler-choix { display: flex; gap: 8px; overflow-x: auto; padding: 6px 0; -webkit-overflow-scrolling: touch; }
+        .combler-choix img { height: 96px; width: auto; flex: 0 0 auto; border-radius: 6px; border: 2px solid transparent; cursor: pointer; }
+        .combler-choix img:hover { border-color: var(--accent); }
         .poster-cell { position: relative; }
         .poster-cell .coh-badge { position: absolute; left: 5px; right: 5px; bottom: 8px; padding: 1px 3px; border-radius: 4px; background: rgba(0, 0, 0, 0.75); color: #fff; font-size: 10px; line-height: 1.25; text-align: center; pointer-events: none; }
         .text-layer label, .checkbox-item label, .lib-field label, .erase-size { color: var(--text2); }
@@ -2618,6 +2697,16 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             <label class="erase-size" for="eraseBrush">Taille du pinceau
                 <input type="range" id="eraseBrush" min="2" max="20" value="6" />
             </label>
+            <div class="combler-zone">
+                <button type="button" class="secondary" id="combleOuvrir">🩹 Combler avec une 2ᵉ image</button>
+                <div id="comblePanel" hidden>
+                    <div class="modal-sub">Colorie d'abord le texte à enlever, puis choisis une image où les mêmes personnages sont visibles (même si le montage est différent) : MouFloster la remet en place, personnage par personnage, et recopie les morceaux qui manquent. Ce qu'elle ne montre pas est comblé comme d'habitude.</div>
+                    <label class="upload-btn" for="combleFichier">⬆️ Envoyer mon image</label>
+                    <input type="file" id="combleFichier" accept="image/*" style="display:none" />
+                    <div class="modal-sub" id="combleInfo"></div>
+                    <div id="combleChoix" class="combler-choix"></div>
+                </div>
+            </div>
             <div class="lib-status" id="eraseStatus" style="display:none"></div>
             <div class="lib-actions">
                 <button class="danger" id="eraseApply">Effacer la zone coloriée</button>
@@ -3439,6 +3528,63 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                 document.getElementById('eraseUndo').disabled = eraseState.history.length === 0;
             }
         }
+
+        // ===== 🩹 Combler la zone peinte avec une 2e image (mêmes personnages, autre montage) =====
+        async function combleOuvrir() {
+            const panel = document.getElementById('comblePanel');
+            panel.hidden = !panel.hidden;
+            if (panel.hidden) return;
+            const choix = document.getElementById('combleChoix'), info = document.getElementById('combleInfo');
+            choix.innerHTML = '';
+            info.textContent = 'Recherche des images du même titre sur TheMovieDB…';
+            const sources = [];
+            if (selectedItem && selectedItem.id && cohTypes.includes(selectedItem.media_type)) {
+                const d = await cohAppel('/api/backdrops', {id: selectedItem.id, media_type: selectedItem.media_type});
+                (d && d.backdrops || []).forEach(b => sources.push({url: b.url, vignette: b.vignette, titre: 'Fond d’écran' + (b.lang ? ' (' + langLabel(b.lang) + ')' : ' sans texte')}));
+            }
+            allPosters.filter(p => p.lang === '').slice(0, 12).forEach(p => sources.push({url: p.url, vignette: p.url, titre: 'Poster sans texte'}));
+            info.textContent = sources.length ? 'Touche une image pour l’utiliser (les fonds d’écran sans texte d’abord), ou envoie la tienne.' : 'Aucune image trouvée pour ce titre : envoie la tienne.';
+            sources.forEach(src => {
+                const im = document.createElement('img');
+                im.src = src.vignette; im.title = src.titre; im.alt = src.titre;
+                im.onclick = () => eraseCombler(src.url);
+                choix.appendChild(im);
+            });
+        }
+        async function eraseCombler(sourceUrl) {
+            if (!eraseState.dirty) { eraseStatus('Colorie d’abord le texte à enlever (avec le doigt), puis choisis l’image.', 'warn'); return; }
+            const btns = document.querySelectorAll('#eraseModal .lib-actions button');
+            btns.forEach(b => b.disabled = true);
+            eraseStatus('⏳ Je cherche où cette image correspond à ton poster, puis je comble… (environ 15 secondes)');
+            try {
+                const res = await fetch('/api/erase/combler', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({poster_url: eraseState.url, mask: eraseState.mask.toDataURL('image/png'), source_url: sourceUrl})});
+                const data = await res.json();
+                if (data.error) { eraseStatus('❌ ' + data.error, 'err'); return; }
+                eraseState.history.push(eraseState.url);
+                eraseState.url = data.url;
+                const r = data.rapport || {};
+                eraseStatus('✅ Comblé : ' + Math.round(r.couvert || 0) + ' % de la zone avec ta 2ᵉ image, ' + Math.round(r.reste || 0) + ' % par l’effaceur. Vérifie le résultat : « ↩ Annuler » le défait, « Utiliser ce poster » le garde.' + (data.note ? ' ⚠️ ' + data.note : ''), data.note ? 'warn' : 'ok');
+                eraseLoadImage();
+            } catch (err) {
+                eraseStatus('❌ ' + err.message, 'err');
+            } finally {
+                btns.forEach(b => b.disabled = false);
+                document.getElementById('eraseUndo').disabled = eraseState.history.length === 0;
+            }
+        }
+        async function combleEnvoyer(fichier) {
+            if (!fichier) return;
+            eraseStatus('⏳ Envoi de l’image…');
+            const fd = new FormData();
+            fd.append('file', fichier);
+            let d = null;
+            try { d = await (await fetch('/api/upload', {method: 'POST', body: fd})).json(); } catch (e) { d = null; }
+            if (!d || d.error) { eraseStatus('❌ ' + ((d && d.error) || 'Envoi impossible'), 'err'); return; }
+            eraseCombler(d.url);
+        }
+        document.getElementById('combleOuvrir').addEventListener('click', combleOuvrir);
+        document.getElementById('combleFichier').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; combleEnvoyer(f); });
 
         function eraseUndo() {
             if (!eraseState.history.length) return;
