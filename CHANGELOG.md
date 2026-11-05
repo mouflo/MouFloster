@@ -3,6 +3,11 @@
 La version affichée est « 1.0 » suivie du nombre de mises à jour depuis le passage en 1.0 (et de l'empreinte du commit).
 L'historique d'avant ce fichier se lit dans les commits du dépôt.
 
+## 5 novembre 2026
+- 🎯 **Garder une série cohérente : les posters existants de la série et les propositions classées par ressemblance.** Quand tu choisis le poster d'une série, une bande « 📚 Déjà dans ta médiathèque pour cette série » montre les posters déjà présents dans son dossier (série et saisons), qu'ils aient été faits avec MouFloster ou bien avant. Les posters proposés par TheMovieDB sont ensuite classés du plus proche au moins proche de ces modèles (couleurs, ambiance sombre ou claire, composition), avec un pourcentage et la raison (« mêmes tons bleus, composition proche ») ; toucher un poster l'explique. Le poster de la saison que tu es en train de refaire ne sert pas de modèle, et le classement se refait quand tu changes de saison ou de langue.
+- 🧽 **Le texte des posters est signalé** : « ✅ sans texte » (TheMovieDB le dit), ou « texte facile / moyen / difficile à effacer » (estimation d'après le fond autour du titre : lisse = facile, chargé = difficile). Un poster sans texte passe devant un poster chargé de même style ; le bouton « 🎯 Trié par ressemblance » revient à l'ordre de TheMovieDB. Rien n'est jamais modifié sans ton choix.
+- Pour l'instant : séries seulement (pas les films ni les sagas), comparaison avec la série elle-même (pas avec les autres séries de la médiathèque).
+
 ## 30 octobre 2026
 - 📚 **Les posters déjà faits dans MouFlanga se retrouvent à la recherche, même sans fiche TheMovieDB** (manga sans anime) : en tapant un nom, les séries de MouFlanga qui portent ce nom et ont un poster choisi apparaissent en tête (« 📚 + Again · ton poster dans MouFlanga ») ; « again », « plus again » et « + Again » donnent le même résultat. Un clic reprend le poster pour le modifier ou le renvoyer. Réservé au compte principal.
 
