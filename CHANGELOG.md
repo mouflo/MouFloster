@@ -4,6 +4,7 @@ La version affichée est « 1.0 » suivie du nombre de mises à jour depuis le p
 L'historique d'avant ce fichier se lit dans les commits du dépôt.
 
 ## 6 novembre 2026
+- 🧑 **Aligner deux portraits sur le visage (comme sous Photoshop).** Avant, l'appli mesurait la silhouette entière (épaules et fond compris), ce qui faussait tout sur un gros plan comme Watson. Elle repère maintenant le visage (petit modèle public YuNet de 230 Ko, téléchargé une seule fois dans `data/modeles`, rien d'envoyé sur Internet ensuite) sur tes posters de la série et sur le poster choisi, puis propose « 🧑 Même visage (taille et place) » : même taille de visage, même position. Essayé sur Watson : saison 1 en modèle, les 7 posters de la saison 2 de TheMovieDB sont ramenés au bon endroit à ±12 px près (zoom 106–117 %) ; ce mode passe en ⭐ conseillé dès qu'il est applicable. Sans visage (affiche de groupe, logo) : les trois cadrages d'avant.
 - ✏️ **Réduire un seul mot du titre : une étoile devant.** « NOËL *DE CHIEN » écrit « de » en petit (49 px sur une ligne de 89 px), comme les petits mots du « Seigneur des Anneaux ». La note sous « Textes » le rappelle maintenant à côté de « et/la ».
 
 ## 5 novembre 2026

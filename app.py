@@ -3133,7 +3133,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
         let cohJeton = 0, cohJetonAlign = 0, cohMinuteur = null;
         let cohAuto = true;
         try { cohAuto = localStorage.getItem('mfCohAuto') !== '0'; } catch (e) {}
-        const cohLibelles = {largeur: '↔️ Même largeur', hauteur: '↕️ Même hauteur', tete: '🙂 Même place de la tête'};
+        const cohLibelles = {largeur: '↔️ Même largeur', hauteur: '↕️ Même hauteur', tete: '🙂 Même place de la tête', visage: '🧑 Même visage (taille et place)'};
         const cohTypes = ['tv', 'movie', 'collection'];
         function cohTexteCourt(t) {
             return {sans: '✅ sans texte', facile: '🧽 texte facile à effacer', moyen: '🧽 texte moyen', difficile: '⚠️ texte difficile'}[t] || '';

@@ -149,6 +149,22 @@ class AlignementTest(unittest.TestCase):
         for cle, attendu in (("x0", 0.35), ("x1", 0.65), ("y0", 0.18), ("y1", 0.80)):
             self.assertAlmostEqual(su[cle], attendu, delta=0.04, msg=cle)
 
+    def test_cadrage_sur_le_visage_donne_meme_taille_et_meme_place(self):
+        cible = {"haut": 0.20, "centre": 0.50, "largeur": 0.30, "bas": 0.896, "touche_bas": True, "n": 1,
+                 "ecarts": {"largeur": 0.0, "haut": 0.0, "hauteur": 0.0}, "visage": {"cx": 0.50, "cy": 0.30, "h": 0.30, "n": 1}}
+        img = _scene((0.25, 0.10, 0.75, 0.95), taille=(500, 750))
+        faux = {"cx": 0.48, "cy": 0.28, "w": 0.2, "h": 0.22}
+        with mock.patch.object(coherence, "visage", return_value=faux):
+            props = {p["mode"]: p for p in coherence.proposer(img, cible, 22, conseille="largeur")}
+        v = props["visage"]
+        # le visage de l'image, agrandi de ce zoom, fait 30 % de la hauteur du poster fini
+        base = max(956 / 500, 1456 / 750)
+        self.assertAlmostEqual(v["zoom"] * base * 750 * 0.22 / 1500, 0.30, delta=0.01)
+        self.assertTrue(v["conseille"] and v["acceptable"] or v["bords_flous"] or abs(v["ecart_haut"]) > 25)
+        # sans visage reconnu : les trois modes d'avant seulement
+        with mock.patch.object(coherence, "visage", return_value=None):
+            self.assertNotIn("visage", {p["mode"] for p in coherence.proposer(img, cible, 22, conseille="largeur")})
+
     def test_cadrage_propose_met_le_haut_et_le_milieu_a_leur_place(self):
         cible = {"haut": 0.20, "centre": 0.50, "largeur": 0.30, "bas": 0.896, "touche_bas": True, "n": 1,
                  "ecarts": {"largeur": 0.0, "haut": 0.0, "hauteur": 0.0}}

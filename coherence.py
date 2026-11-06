@@ -19,6 +19,7 @@ import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -315,6 +316,57 @@ def sujet(img, rogne=0.0):
             "masque": masque, "rogne": rogne}
 
 
+MODELE_VISAGE = Path(__file__).resolve().parent / "data" / "modeles" / "yunet.onnx"
+URL_MODELE_VISAGE = "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
+_detecteur = {"obj": None, "essaye": False}
+
+
+def _modele_visage():
+    """Petit modèle public de détection de visage (YuNet, 230 Ko), téléchargé une seule fois dans data/modeles. None s'il manque."""
+    if MODELE_VISAGE.exists() and MODELE_VISAGE.stat().st_size > 100_000:
+        return MODELE_VISAGE
+    if _detecteur["essaye"]:
+        return None
+    _detecteur["essaye"] = True
+    try:
+        import requests
+        r = requests.get(URL_MODELE_VISAGE, timeout=30)
+        r.raise_for_status()
+        if len(r.content) < 100_000:
+            return None
+        MODELE_VISAGE.parent.mkdir(parents=True, exist_ok=True)
+        MODELE_VISAGE.write_bytes(r.content)
+        return MODELE_VISAGE
+    except Exception:
+        return None
+
+
+def visage(img):
+    """Le plus grand visage de l'image : {"cx","cy","h","w"} en fractions de l'image entière, ou None (pas de visage, ou modèle absent).
+    Sert à aligner deux portraits comme sous Photoshop : même taille de visage, même place."""
+    chemin = _modele_visage()
+    if chemin is None:
+        return None
+    rgb = img.convert("RGB")
+    W, H = rgb.size
+    k = min(1.0, 800.0 / max(W, H))
+    petite = np.ascontiguousarray(np.asarray(rgb.resize((max(32, int(W * k)), max(32, int(H * k))), Image.BOX), dtype=np.uint8)[:, :, ::-1])
+    h, w = petite.shape[:2]
+    try:
+        with _verrou:
+            det = cv2.FaceDetectorYN.create(str(chemin), "", (w, h), 0.6, 0.3, 50)
+            _, faces = det.detect(petite)
+    except Exception:
+        return None
+    if faces is None or not len(faces):
+        return None
+    f = max(faces, key=lambda r: float(r[2]) * float(r[3]))
+    if float(f[2]) * float(f[3]) < 0.004 * w * h:                        # un visage minuscule dans un groupe ou un décor : pas un portrait
+        return None
+    x, y, fw, fh = (float(v) for v in f[:4])
+    return {"cx": (x + fw / 2) / w, "cy": (y + fh / 2) / h, "w": fw / w, "h": fh / h}
+
+
 def _largeur_bande(su, y_haut, y_bas):
     """Largeur (fraction de l'image) du personnage entre deux hauteurs (fractions de l'image)."""
     mk = su["masque"]
@@ -339,7 +391,7 @@ def mesurer_modele(img):
     if larg is None:
         return None
     return {"haut": haut, "centre": (su["x0"] + su["x1"]) / 2, "largeur": larg, "bas": su["y1"],
-            "touche_bas": su["y1"] >= 0.80}
+            "touche_bas": su["y1"] >= 0.80, "visage": visage(img)}
 
 
 def _mediane(valeurs):
@@ -358,6 +410,11 @@ def resume_modeles(mesures):
              # fourchette de TES posters : un cadrage compris dedans « colle » même si ce n'est pas la médiane
              "haut_min": min(m["haut"] for m in ms), "haut_max": max(m["haut"] for m in ms),
              "centre_min": min(m["centre"] for m in ms), "centre_max": max(m["centre"] for m in ms)}
+
+    vs = [m["visage"] for m in ms if m.get("visage")]
+    if vs and len(vs) * 2 >= len(ms):                         # la plupart de tes posters montrent un visage : on aligne sur lui
+        cible["visage"] = {"cx": _mediane([v["cx"] for v in vs]), "cy": _mediane([v["cy"] for v in vs]), "h": _mediane([v["h"] for v in vs]),
+                           "n": len(vs)}
 
     def ecart_rel(cle):
         med = _mediane([m[cle] for m in ms])
@@ -416,12 +473,22 @@ def proposer(img, cible, border=22, modes=("largeur", "hauteur", "tete"), consei
     if su is None or cible is None:
         return []
     sw, sh = img.size
+    vis = visage(img) if cible.get("visage") else None
+    if vis:
+        modes = ("visage",) + tuple(modes)
     aire = (su["x1"] - su["x0"]) * (su["y1"] - su["y0"])
     sur = 0.06 <= aire <= 0.85 and su.get("riche", True)
     base = max((IMG_W - 2 * border) / sw, (IMG_H - 2 * border) / sh)
     cx_su = (su["x0"] + su["x1"]) / 2
     sorties = []
     for mode in modes:
+        if mode == "visage":                                     # même taille de visage, même place : comme sous Photoshop
+            zoom = min(4.0, max(0.5, (cible["visage"]["h"] * IMG_H) / (vis["h"] * sh) / base))
+            cx, cy, ex, ey, flous = _cadrage(sw, sh, border, zoom, cible["visage"]["cx"], cible["visage"]["cy"], vis["cx"], vis["cy"])
+            sorties.append({"mode": mode, "zoom": round(float(zoom), 3), "crop_x": round(float(cx), 3), "crop_y": round(float(cy), 3),
+                            "ecart_haut": int(round(float(ey))), "ecart_centre": int(round(float(ex))), "bords_flous": bool(flous),
+                            "sur": True, "conseille": False})
+            continue
         if mode == "largeur":
             scale = base
             for _ in range(4):                                   # la bande visible dépend de l'échelle : on affine
@@ -463,11 +530,13 @@ def proposer(img, cible, border=22, modes=("largeur", "hauteur", "tete"), consei
     def erreur(pr):
         return abs(pr["ecart_haut"]) + abs(pr["ecart_centre"]) + (400 if pr["bords_flous"] else 0) + (300 if not 0.7 <= pr["zoom"] <= 1.8 else 0)
     for pr in sorties:                                           # « acceptable » : assez bon pour être appliqué sans demander
-        pr["acceptable"] = bool(pr["sur"] and not pr["bords_flous"] and abs(pr["ecart_haut"]) <= 60 and abs(pr["ecart_centre"]) <= 60
-                                and 0.7 <= pr["zoom"] <= 1.8)
+        pr["acceptable"] = bool(pr["sur"] and not pr["bords_flous"] and abs(pr["ecart_haut"]) <= (25 if pr["mode"] == "visage" else 60)
+                                and abs(pr["ecart_centre"]) <= (25 if pr["mode"] == "visage" else 60)
+                                and (0.6 <= pr["zoom"] <= 2.5 if pr["mode"] == "visage" else 0.7 <= pr["zoom"] <= 1.8))
     if sorties:
         bons = [pr for pr in sorties if pr["acceptable"]] or sorties          # un cadrage acceptable passe toujours avant un mauvais
-        meilleur = min(bons, key=lambda pr: (round(erreur(pr) / 40), ordre.index(pr["mode"]) if pr["mode"] in ordre else 9))
+        visages = [pr for pr in bons if pr["mode"] == "visage" and pr["acceptable"]]
+        meilleur = visages[0] if visages else min(bons, key=lambda pr: (round(erreur(pr) / 40), ordre.index(pr["mode"]) if pr["mode"] in ordre else 9))
         meilleur["conseille"] = True
     return sorties
 
