@@ -165,6 +165,25 @@ class AlignementTest(unittest.TestCase):
         with mock.patch.object(coherence, "visage", return_value=None):
             self.assertNotIn("visage", {p["mode"] for p in coherence.proposer(img, cible, 22, conseille="largeur")})
 
+    def test_plan_visage_ajoute_le_decor_la_ou_il_manque(self):
+        cvis = {"cx": 0.5, "cy": 0.30, "h": 0.25}
+        vis = {"cx": 0.5, "cy": 0.20, "h": 0.25}                # visage trop haut dans l'image : il faut du décor au-dessus
+        pl = coherence.plan_visage(500, 750, vis, cvis, 22)
+        self.assertGreater(pl["pads"][1], 0)
+        self.assertEqual((pl["pads"][0], pl["pads"][2]), (0, 0))
+        # le visage de l'image agrandie tombe à la place visée : y = cible, même taille
+        s = pl["echelle"]
+        base = max(956 / pl["nw"], 1456 / pl["nh"])
+        self.assertAlmostEqual(pl["zoom"] * base, s, delta=1e-6)
+        fy = (0.20 * 750 + pl["pads"][1]) * s
+        oy = -(pl["nh"] * s - 1456) * pl["crop_y"]
+        self.assertAlmostEqual(oy + fy, 0.30 * 1500 - 22, delta=1.5)
+        self.assertAlmostEqual(0.25 * 750 * s, 0.25 * 1500, delta=0.5)
+
+    def test_plan_visage_sans_manque(self):
+        pl = coherence.plan_visage(500, 750, {"cx": 0.5, "cy": 0.35, "h": 0.25}, {"cx": 0.5, "cy": 0.30, "h": 0.25}, 22)
+        self.assertEqual(pl["pads"][1], 0)
+
     def test_cadrage_propose_met_le_haut_et_le_milieu_a_leur_place(self):
         cible = {"haut": 0.20, "centre": 0.50, "largeur": 0.30, "bas": 0.896, "touche_bas": True, "n": 1,
                  "ecarts": {"largeur": 0.0, "haut": 0.0, "hauteur": 0.0}}

@@ -93,7 +93,7 @@ import apparence
 apparence.init_app(app)     # skins et couleurs au choix, par compte
 import comptes   # 👥 comptes « copain » : créateur de posters, envoi vers LEUR Emby (jamais la médiathèque de l'admin)
 comptes.init_app(app, auth, Path(__file__).parent / "data")
-auth.COPAIN_OK = {("GET", "/"), ("POST", "/api/search"), ("POST", "/api/posters"), ("POST", "/api/upload"), ("POST", "/api/erase"), ("POST", "/api/etendre"),
+auth.COPAIN_OK = {("GET", "/"), ("POST", "/api/search"), ("POST", "/api/posters"), ("POST", "/api/upload"), ("POST", "/api/erase"), ("POST", "/api/etendre"), ("POST", "/api/coherence/aligner_etendre"),
                   ("POST", "/api/preview"), ("POST", "/api/decoupe"), ("POST", "/api/save"), ("GET", "/api/layout"), ("POST", "/api/clientlog"), ("GET", "/api/moi"),
                   ("POST", "/api/copain/profil"), ("POST", "/api/copain/envoyer"), ("POST", "/api/copain/existant")}
 auth.COPAIN_PREFIXES = (("GET", "/api/upload/"), ("GET", "/api/download/"), ("GET", "/api/copain/existant/"))
@@ -873,6 +873,71 @@ def api_erase():
     return jsonify({"url": UPLOAD_URL_PREFIX + name, "w": result.width, "h": result.height, "engine": engine, "note": note})
 
 
+def _agrandir_avec_decor(img: Image.Image, pads):
+    """Ajoute à l'image des bandes (gauche, haut, droite, bas, en pixels) et les fait remplir par LaMa ; l'image d'origine reste intacte.
+    Renvoie l'image agrandie. Lève RuntimeError (message en français) si LaMa n'est pas disponible."""
+    import numpy as np
+    import lama
+    ok, raison = lama.check()
+    if not ok:
+        raise RuntimeError("L'outil qui invente le décor (LaMa) n'est pas disponible : " + str(raison))
+    g, h, d, b = pads
+    arr = np.asarray(img.convert("RGB"))
+    sh, sw = arr.shape[:2]
+    large = np.pad(arr, ((h, b), (g, d), (0, 0)), mode="edge")       # le bord répété sert de point de départ neutre
+    masque = np.full(large.shape[:2], 255, np.uint8)
+    masque[h:h + sh, g:g + sw] = 0
+    t0 = time.time()
+    rempli = lama.inpaint(Image.fromarray(large), masque)
+    logger.info(f"✨ Décor inventé par LaMa en {time.time() - t0:.1f} s ({sw}x{sh} → {large.shape[1]}x{large.shape[0]})")
+    sortie = np.asarray(rempli.convert("RGB")).copy()
+    sortie[h:h + sh, g:g + sw] = arr
+    return Image.fromarray(sortie)
+
+
+@app.route("/api/coherence/aligner_etendre", methods=["POST"])
+def api_coherence_aligner_etendre():
+    """🧑 Aligne le VISAGE du poster choisi sur celui de tes posters (même taille, même place) en inventant, si besoin, le décor qui manque
+    d'un côté précis (par exemple au-dessus de la tête). POST {…comme /api/coherence/aligner…}.
+    Réponse : {url (nouvelle image, absente si rien ne manque), zoom, crop_x, crop_y, part, message}."""
+    data = request.get_json(silent=True) or {}
+    media_type, tmdb_id, titles, year, saison = _lire_titre_de(data)
+    if media_type not in ("tv", "movie", "collection") or not tmdb_id or not data.get("poster_url"):
+        return jsonify({"error": "Titre ou poster manquant."}), 400
+    refs, message, _ = _references_de(media_type, tmdb_id, titles, year, saison)
+    cible = coherence.resume_modeles(coherence.modeles_mesures(refs) if refs else [])
+    if cible is None or not cible.get("visage"):
+        return jsonify({"error": "Aucun visage repéré sur tes posters de cette série."}), 422
+    img = load_source_image(str(data.get("poster_url")), "original")
+    if not img:
+        return jsonify({"error": "Impossible de charger ce poster."}), 400
+    img = img.convert("RGB")
+    if max(img.size) > 2400:
+        img.thumbnail((2400, 2400), Image.Resampling.LANCZOS)
+    vis = coherence.visage(img)
+    if not vis:
+        return jsonify({"error": "Je ne vois pas de visage sur ce poster."}), 422
+    pl = coherence.plan_visage(img.width, img.height, vis, cible["visage"], _bordure(data.get("border_style")))
+    if pl["part"] > 0.5 or not 0.5 <= pl["zoom"] <= 3.0:
+        return jsonify({"error": "Il manquerait trop de décor (%d %%) pour mettre ce visage à sa place : choisis un autre poster." % round(100 * pl["part"])}), 422
+    sortie = {"zoom": round(pl["zoom"], 4), "crop_x": round(pl["crop_x"], 4), "crop_y": round(pl["crop_y"], 4), "part": round(100 * pl["part"])}
+    if not any(pl["pads"]):
+        return jsonify(dict(sortie, rien=True, message="Aucun décor à ajouter : le visage rejoint sa place."))
+    try:
+        agrandie = _agrandir_avec_decor(img, pl["pads"])
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
+    except Exception as e:
+        logger.exception("Erreur pendant l'ajout de décor")
+        return jsonify({"error": f"Impossible d'inventer le décor : {e}"}), 500
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    name = uuid.uuid4().hex + ".jpg"
+    agrandie.save(os.path.join(UPLOAD_DIR, name), quality=95)
+    return jsonify(dict(sortie, url=UPLOAD_URL_PREFIX + name, w=agrandie.width, h=agrandie.height,
+                        message="Visage aligné ; décor ajouté : " + ", ".join(
+                            f"{n} {v} px" for n, v in zip(("à gauche", "au-dessus", "à droite", "en dessous"), pl["pads"]) if v) + "."))
+
+
 @app.route("/api/etendre", methods=["POST"])
 def api_etendre():
     """✨ Invente le décor qui manque quand l'image est plus petite que le cadre au zoom choisi (bandes floues du dézoom).
@@ -900,24 +965,13 @@ def api_etendre():
     part = max(manque_x / max(sw, 1), manque_y / max(sh, 1))
     if part > 0.8:
         return jsonify({"error": "Il manquerait plus de 80 % de l'image : choisis une image plus grande ou un zoom plus grand."}), 422
-    arr = np.asarray(img)
-    large = np.pad(arr, ((b, b), (a, a), (0, 0)), mode="edge")       # le bord répété sert de point de départ neutre
-    masque = np.full((nh, nw), 255, np.uint8)
-    masque[b:b + sh, a:a + sw] = 0
     try:
-        import lama
-        ok, raison = lama.check()
-        if not ok:
-            return jsonify({"error": "L'outil qui invente le décor (LaMa) n'est pas disponible : " + str(raison)}), 503
-        t0 = time.time()
-        rempli = lama.inpaint(Image.fromarray(large), masque)
-        logger.info(f"✨ Décor inventé par LaMa en {time.time() - t0:.1f} s ({sw}x{sh} → {nw}x{nh})")
+        resultat = _agrandir_avec_decor(img, (a, b, a, b))
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
     except Exception as e:
         logger.exception("Erreur pendant l'ajout de décor")
         return jsonify({"error": f"Impossible d'inventer le décor : {e}"}), 500
-    sortie = np.asarray(rempli.convert("RGB")).copy()
-    sortie[b:b + sh, a:a + sw] = arr                                  # l'image d'origine reste intacte
-    resultat = Image.fromarray(sortie)
     # même cadrage qu'avant : l'échelle d'affichage reste « echelle » ; sur un axe qui était trop petit, l'image remplit maintenant juste le cadre
     base = max(iw / nw, ih / nh)
     nouveau_zoom = _clamp_zoom(echelle / base)
@@ -3331,12 +3385,14 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                 b.className = 'secondary' + (p.conseille ? ' conseille' : '');
                 b.dataset.mode = p.mode;
                 b.textContent = cohLibelles[p.mode] + (p.conseille ? ' ⭐' : '') + (p.acceptable ? '' : ' ⚠️');
-                b.title = 'Zoom ' + Math.round(p.zoom * 100) + ' %';
-                b.onclick = () => cohAppliquer(p);
+                b.title = 'Zoom ' + Math.round(p.zoom * 100) + ' %' + (p.etendre ? ' · ' + p.part + ' % de décor à inventer' : '');
+                if (p.etendre) b.textContent += ' ✨';
+                b.onclick = () => p.etendre ? cohVisageEtendre(p) : cohAppliquer(p);
                 propo.appendChild(b);
             });
             const meilleur = d.propositions.find(p => p.conseille) || d.propositions[0];
-            if (cohAuto && meilleur.acceptable) cohAppliquer(meilleur);
+            if (cohAuto && meilleur.acceptable && meilleur.etendre) cohEtat('🧑 Pour mettre le visage à la même place que sur tes posters, il faut inventer ' + meilleur.part + ' % de décor : touche « ' + cohLibelles.visage + ' ✨ » (10 à 30 secondes).');
+            else if (cohAuto && meilleur.acceptable) cohAppliquer(meilleur);
             else if (cohAuto) cohEtat('Aucun cadrage automatique assez sûr pour ce poster (personnage trop différent de tes posters, ou pas assez d’image) : essaie une proposition ci-dessus, ou règle à la main.');
             else cohEtat('Choisis un cadrage proposé (⭐ = conseillé d’après tes ' + d.modeles + ' poster(s)), ou règle à la main.');
         }
@@ -3354,6 +3410,34 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
 
         // ===== ✨ Inventer le décor qui manque (bandes floues d'une image plus petite que le cadre) =====
         let etendrePrecedent = null;
+        function etendreAppliquer(d) {
+            etendrePrecedent = {poster: selectedPoster, cropX: document.getElementById('cropX').value, cropY: document.getElementById('cropY').value,
+                                zoom: document.getElementById('zoom').value};
+            selectedPoster = {url: d.url, lang: '', upload: true};
+            document.getElementById('cropX').value = Math.round(d.crop_x * 100);
+            document.getElementById('cropY').value = Math.round(d.crop_y * 100);
+            document.getElementById('zoom').value = Math.round(d.zoom * 100);
+            document.getElementById('zoomVal').textContent = Math.round(d.zoom * 100);
+            document.getElementById('etendreAnnuler').hidden = false;
+            generatePreview();
+        }
+        async function cohVisageEtendre(p) {
+            if (!selectedPoster || !selectedItem) return;
+            const item = selectedItem;
+            document.querySelectorAll('#cohPropo button').forEach(b => b.disabled = true);
+            cohEtat('⏳ J’aligne le visage et j’invente le décor qui manque… (10 à 30 secondes)');
+            try {
+                const d = await cohAppel('/api/coherence/aligner_etendre', Object.assign({}, cohBase(item), {poster_url: selectedPoster.url, border_style: styleCadre()}));
+                if (!d || d.error) { cohEtat('❌ ' + ((d && d.error) || 'Alignement impossible.')); return; }
+                if (d.url) etendreAppliquer(d);
+                else cohAppliquer(Object.assign({}, p, {zoom: d.zoom, crop_x: d.crop_x, crop_y: d.crop_y, etendre: false}));
+                document.querySelectorAll('#cohPropo button').forEach(b => b.classList.toggle('applique', b.dataset.mode === 'visage'));
+                cohEtat('✅ ' + d.message + ' « ↩️ Revenir à l’image d’avant » annule.');
+            } finally {
+                document.querySelectorAll('#cohPropo button').forEach(b => b.disabled = false);
+            }
+        }
+
         function etendreMessage(t) { const e = document.getElementById('etendreInfo'); e.textContent = t || ''; e.hidden = !t; }
         document.getElementById('etendreBtn').addEventListener('click', async () => {
             if (!selectedPoster) { etendreMessage('Choisis d’abord un poster.'); return; }
@@ -3368,17 +3452,8 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                 const d = await res.json();
                 if (d.error) { etendreMessage('❌ ' + d.error); return; }
                 if (d.rien) { etendreMessage(d.message); return; }
-                etendrePrecedent = {poster: selectedPoster, cropX: document.getElementById('cropX').value, cropY: document.getElementById('cropY').value,
-                                    zoom: document.getElementById('zoom').value};
-                const poster = {url: d.url, lang: '', upload: true};
-                selectedPoster = poster;
-                document.getElementById('cropX').value = Math.round(d.crop_x * 100);
-                document.getElementById('cropY').value = Math.round(d.crop_y * 100);
-                document.getElementById('zoom').value = Math.round(d.zoom * 100);
-                document.getElementById('zoomVal').textContent = Math.round(d.zoom * 100);
-                document.getElementById('etendreAnnuler').hidden = false;
+                etendreAppliquer(d);
                 etendreMessage('✅ ' + d.message + ' Le cadrage est resté le même ; tu peux maintenant déplacer ou zoomer sans bords flous.');
-                generatePreview();
             } catch (err) {
                 etendreMessage('❌ ' + err.message);
             } finally {

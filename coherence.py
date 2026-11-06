@@ -367,6 +367,27 @@ def visage(img):
     return {"cx": (x + fw / 2) / w, "cy": (y + fh / 2) / h, "w": fw / w, "h": fh / h}
 
 
+def plan_visage(sw, sh, vis, cvis, border=22):
+    """Où mettre l'image pour que son visage ait la taille et la place du visage modèle ? Renvoie
+    {"echelle", "pads": (gauche, haut, droite, bas) en pixels de l'image à AJOUTER pour que le cadre reste plein, "nw", "nh", "zoom",
+    "crop_x", "crop_y", "part"} : zoom et recadrage valent pour l'image agrandie de ces bandes (les mêmes que l'image si rien ne manque)."""
+    iw, ih = IMG_W - 2 * border, IMG_H - 2 * border
+    s = (cvis["h"] * IMG_H) / (vis["h"] * sh)                              # pixels du poster fini par pixel de l'image
+    tx, ty = cvis["cx"] * IMG_W - border, cvis["cy"] * IMG_H - border
+    fx, fy = vis["cx"] * sw, vis["cy"] * sh
+    gauche, haut = tx - fx * s, ty - fy * s                                # coin haut-gauche de l'image dans le cadre
+    pad = [max(0.0, gauche), max(0.0, haut), max(0.0, iw - (gauche + sw * s)), max(0.0, ih - (haut + sh * s))]
+    pads = tuple(int(np.ceil(p / s)) if p > 0.5 else 0 for p in pad)
+    nw, nh = sw + pads[0] + pads[2], sh + pads[1] + pads[3]
+    ox, oy = tx - (fx + pads[0]) * s, ty - (fy + pads[1]) * s              # coin de l'image agrandie, dans le cadre (≤ 0)
+    base = max(iw / nw, ih / nh)
+    zoom = s / base
+    cx = 0.5 if nw * s - iw < 1 else min(1.0, max(0.0, -ox / (nw * s - iw)))
+    cy = 0.5 if nh * s - ih < 1 else min(1.0, max(0.0, -oy / (nh * s - ih)))
+    part = max((pads[0] + pads[2]) / sw, (pads[1] + pads[3]) / sh)
+    return {"echelle": s, "pads": pads, "nw": nw, "nh": nh, "zoom": zoom, "crop_x": cx, "crop_y": cy, "part": part}
+
+
 def _largeur_bande(su, y_haut, y_bas):
     """Largeur (fraction de l'image) du personnage entre deux hauteurs (fractions de l'image)."""
     mk = su["masque"]
@@ -483,11 +504,12 @@ def proposer(img, cible, border=22, modes=("largeur", "hauteur", "tete"), consei
     sorties = []
     for mode in modes:
         if mode == "visage":                                     # même taille de visage, même place : comme sous Photoshop
-            zoom = min(4.0, max(0.5, (cible["visage"]["h"] * IMG_H) / (vis["h"] * sh) / base))
-            cx, cy, ex, ey, flous = _cadrage(sw, sh, border, zoom, cible["visage"]["cx"], cible["visage"]["cy"], vis["cx"], vis["cy"])
-            sorties.append({"mode": mode, "zoom": round(float(zoom), 3), "crop_x": round(float(cx), 3), "crop_y": round(float(cy), 3),
-                            "ecart_haut": int(round(float(ey))), "ecart_centre": int(round(float(ex))), "bords_flous": bool(flous),
-                            "sur": True, "conseille": False})
+            pl = plan_visage(sw, sh, vis, cible["visage"], border)
+            ok = 0.6 <= pl["zoom"] <= 2.5 and pl["part"] <= 0.5
+            sorties.append({"mode": mode, "zoom": round(float(min(3.0, max(0.5, pl["zoom"]))), 3), "crop_x": round(float(pl["crop_x"]), 3),
+                            "crop_y": round(float(pl["crop_y"]), 3), "ecart_haut": 0, "ecart_centre": 0, "bords_flous": False,
+                            "sur": True, "conseille": False, "etendre": bool(any(pl["pads"])), "part": round(100 * float(pl["part"])),
+                            "possible": bool(ok)})
             continue
         if mode == "largeur":
             scale = base
@@ -530,6 +552,9 @@ def proposer(img, cible, border=22, modes=("largeur", "hauteur", "tete"), consei
     def erreur(pr):
         return abs(pr["ecart_haut"]) + abs(pr["ecart_centre"]) + (400 if pr["bords_flous"] else 0) + (300 if not 0.7 <= pr["zoom"] <= 1.8 else 0)
     for pr in sorties:                                           # « acceptable » : assez bon pour être appliqué sans demander
+        if pr["mode"] == "visage":
+            pr["acceptable"] = bool(pr["possible"])
+            continue
         pr["acceptable"] = bool(pr["sur"] and not pr["bords_flous"] and abs(pr["ecart_haut"]) <= (25 if pr["mode"] == "visage" else 60)
                                 and abs(pr["ecart_centre"]) <= (25 if pr["mode"] == "visage" else 60)
                                 and (0.6 <= pr["zoom"] <= 2.5 if pr["mode"] == "visage" else 0.7 <= pr["zoom"] <= 1.8))
