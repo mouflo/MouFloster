@@ -3,6 +3,9 @@
 La version affichée est « 1.0 » suivie du nombre de mises à jour depuis le passage en 1.0 (et de l'empreinte du commit).
 L'historique d'avant ce fichier se lit dans les commits du dépôt.
 
+## 6 novembre 2026
+- ✏️ **Réduire un seul mot du titre : une étoile devant.** « NOËL *DE CHIEN » écrit « de » en petit (49 px sur une ligne de 89 px), comme les petits mots du « Seigneur des Anneaux ». La note sous « Textes » le rappelle maintenant à côté de « et/la ».
+
 ## 5 novembre 2026
 - 🩹 **Comblage avec une 2ᵉ image : fondu large autour des morceaux recopiés.** Les bords des morceaux n'étaient fondus que sur quelques pixels ; ils se fondent maintenant sur une quinzaine de pixels vers le poster intact (seulement là où la 2ᵉ image ressemble au poster, pour ne pas faire de fantôme), ce qui adoucit encore les différences de teinte.
 - 🎯 **Garder une série cohérente : les posters existants de la série et les propositions classées par ressemblance.** Quand tu choisis le poster d'une série, une bande « 📚 Déjà dans ta médiathèque pour cette série » montre les posters déjà présents dans son dossier (série et saisons), qu'ils aient été faits avec MouFloster ou bien avant. Les posters proposés par TheMovieDB sont ensuite classés du plus proche au moins proche de ces modèles (couleurs, ambiance sombre ou claire, composition), avec un pourcentage et la raison (« mêmes tons bleus, composition proche ») ; toucher un poster l'explique. Le poster de la saison que tu es en train de refaire ne sert pas de modèle, et le classement se refait quand tu changes de saison ou de langue.

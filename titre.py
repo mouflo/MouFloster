@@ -12,6 +12,7 @@ des posters reste homogène. Règles tirées des posters faits à la main sous P
   passe au-dessus (« LES » / « INDESTRUCTIBLES ») ; sous-titre trop long : 2 lignes de 49 px.
 - Numéro de suite (« Conjuring 2 », « Vol. 2 », « Partie 1 ») : grand chiffre gris derrière le titre (films).
 - « Star Wars, Épisode IV : … » : « Épisode IV » est retiré.
+  Taper « *de » (étoile collée devant un mot) écrit ce mot seul en petit : « NOËL *DE CHIEN ».
 Les lettres ne rétrécissent qu'en dernier recours, et la page le signale.
 """
 import re
@@ -56,6 +57,8 @@ def _commence_par_article(texte):
 def _bloc_mot(mot):
     """Mot écrit en grand, ou « ET/LA » tapé avec une barre : les deux petits mots toujours empilés.
     Seulement entre deux petits mots (« AC/DC » reste tel quel)."""
+    if mot.startswith("*") and len(mot) > 1 and mot[1:].replace("*", "") != "":
+        return ("petit", mot.lstrip("*"))           # « *DE » : ce mot seul est écrit en petit (49 px sur une ligne de 89 px)
     a, barre, b = mot.partition("/")
     if barre and a.lower() in PETITS_MOTS and b.lower() in PETITS_MOTS:
         return ("pile", a, b)

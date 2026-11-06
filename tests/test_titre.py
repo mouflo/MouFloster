@@ -41,6 +41,12 @@ class DecoupageTest(unittest.TestCase):
         self.assertEqual(plan["taille"], 89)
         self.assertIn(("pile", "ET", "LA"), plan["blocs"])
 
+    def test_etoile_devant_un_mot_l_ecrit_en_petit(self):
+        plan = titre.plan_ligne("Noël *de chien", 89, LARGEUR, police)
+        self.assertEqual(plan["blocs"], [("mot", "NOËL"), ("petit", "DE"), ("mot", "CHIEN")])
+        self.assertEqual(plan["taille"], 89)
+        self.assertEqual(titre.plan_ligne("*", 89, LARGEUR, police)["blocs"], [("mot", "*")])
+
     def test_titre_qui_commence_par_un_article_n_est_pas_coupe(self):
         self.assertEqual(lignes("Le Bon, la Brute et le Truand")[1:3], ("Le Bon, la Brute", "et le Truand"))
         self.assertEqual(lignes("La Belle et la Bête")[1:4], ("La Belle", "et la Bête", ""))
