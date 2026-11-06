@@ -20,6 +20,7 @@ MIN_POINTS = 10                # points concordants pour accepter une transforma
 MAX_MODELES = 7
 ECART_ACCORD = 42              # écart de couleur (0-255) en dessous duquel on dit « pareil »
 FIABILITE_MIN = 0.45           # part des pixels voisins qui concordent pour faire confiance à une transformation
+FONDU_SIGMA = 7                # largeur (px) du fondu vers le poster intact, autour des morceaux recopiés
 LISSAGE_ACCORD = 12            # lissage (px) de la carte de concordance avant de la prolonger dans la zone à combler
 DISTANCE_MAX = 260             # au-delà de cette distance (px) du bord de la zone, aucune transformation n'est crue
 MARGE = 160                    # zone de travail autour de la zone peinte
@@ -308,14 +309,15 @@ def combler(poster, masque, source):
     choisi = trou & (valeur >= FIABILITE_MIN)
     resultat = P.copy()
     morceaux = []
-    zone_fondu = cv2.dilate(trou.astype(np.uint8), np.ones((9, 9), np.uint8)) > 0
     for k, mod in enumerate(modeles):
         sel = choisi & (meilleur == k)
         n = int(sel.sum())
         if n < 30:
             continue
-        alpha = cv2.GaussianBlur(sel.astype(np.float32), (0, 0), 2.0)
-        alpha = np.where(zone_fondu, alpha, 0.0)[:, :, None]
+        # dedans : bords légèrement fondus ; dehors (poster intact) : long fondu, seulement là où la 2e image ressemble au poster
+        dedans = cv2.GaussianBlur(sel.astype(np.float32), (0, 0), 2.0) * trou
+        dehors = cv2.GaussianBlur(sel.astype(np.float32), (0, 0), FONDU_SIGMA) * (~trou) * (fiabilites[k] >= FIABILITE_MIN) * couvertures[k]
+        alpha = np.clip(dedans + dehors, 0.0, 1.0)[:, :, None].astype(np.float32)
         resultat = resultat * (1 - alpha) + images[k] * alpha
         morceaux.append({"part": round(100.0 * n / surface, 1), "echelle": round(mod["echelle"], 3), "rotation": round(mod["rotation"], 1),
                          "points": mod["points"], "fiabilite": round(float(valeur[sel].mean()), 2)})
