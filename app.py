@@ -93,7 +93,7 @@ import apparence
 apparence.init_app(app)     # skins et couleurs au choix, par compte
 import comptes   # 👥 comptes « copain » : créateur de posters, envoi vers LEUR Emby (jamais la médiathèque de l'admin)
 comptes.init_app(app, auth, Path(__file__).parent / "data")
-auth.COPAIN_OK = {("GET", "/"), ("POST", "/api/search"), ("POST", "/api/posters"), ("POST", "/api/upload"), ("POST", "/api/erase"),
+auth.COPAIN_OK = {("GET", "/"), ("POST", "/api/search"), ("POST", "/api/posters"), ("POST", "/api/upload"), ("POST", "/api/erase"), ("POST", "/api/etendre"),
                   ("POST", "/api/preview"), ("POST", "/api/decoupe"), ("POST", "/api/save"), ("GET", "/api/layout"), ("POST", "/api/clientlog"), ("GET", "/api/moi"),
                   ("POST", "/api/copain/profil"), ("POST", "/api/copain/envoyer"), ("POST", "/api/copain/existant")}
 auth.COPAIN_PREFIXES = (("GET", "/api/upload/"), ("GET", "/api/download/"), ("GET", "/api/copain/existant/"))
@@ -871,6 +871,62 @@ def api_erase():
     result.save(os.path.join(UPLOAD_DIR, name), quality=95)
     logger.info(f"🧽 Effacement ({engine}): {name} ({result.width}x{result.height})")
     return jsonify({"url": UPLOAD_URL_PREFIX + name, "w": result.width, "h": result.height, "engine": engine, "note": note})
+
+
+@app.route("/api/etendre", methods=["POST"])
+def api_etendre():
+    """✨ Invente le décor qui manque quand l'image est plus petite que le cadre au zoom choisi (bandes floues du dézoom).
+    POST {poster_url, crop_x, crop_y, zoom, border_style}. Les bandes manquantes sont ajoutées à l'image puis remplies par LaMa
+    (l'image d'origine n'est jamais modifiée) ; la réponse donne la nouvelle image et le zoom / recadrage qui gardent le même cadrage."""
+    import numpy as np
+    data = request.get_json(silent=True) or {}
+    img = load_source_image(str(data.get("poster_url") or ""), "original")
+    if not img:
+        return jsonify({"error": "Impossible de charger l'image"}), 400
+    img = img.convert("RGB")
+    cx, cy, zoom = _clamp01(data.get("crop_x", 0.5)), _clamp01(data.get("crop_y", 0.5)), _clamp_zoom(data.get("zoom", 1.0))
+    iw = IMG_WIDTH - 2 * _bordure(data.get("border_style"))
+    ih = IMG_HEIGHT - 2 * _bordure(data.get("border_style"))
+    if max(img.size) > 2400:                      # inutile d'inventer en très haute définition : le poster fini fait 1000 px
+        img.thumbnail((2400, 2400), Image.Resampling.LANCZOS)
+    sw, sh = img.size
+    echelle = max(iw / sw, ih / sh) * zoom
+    manque_x = max(0.0, iw / echelle - sw)        # largeur / hauteur manquantes, en pixels de l'image
+    manque_y = max(0.0, ih / echelle - sh)
+    if manque_x < 2 and manque_y < 2:
+        return jsonify({"rien": True, "message": "Rien ne manque : l'image remplit déjà le cadre à ce zoom."})
+    a, b = int(round(manque_x / 2)), int(round(manque_y / 2))        # moitié de chaque côté, comme l'aperçu centre l'image
+    nw, nh = sw + 2 * a, sh + 2 * b
+    part = max(manque_x / max(sw, 1), manque_y / max(sh, 1))
+    if part > 0.8:
+        return jsonify({"error": "Il manquerait plus de 80 % de l'image : choisis une image plus grande ou un zoom plus grand."}), 422
+    arr = np.asarray(img)
+    large = np.pad(arr, ((b, b), (a, a), (0, 0)), mode="edge")       # le bord répété sert de point de départ neutre
+    masque = np.full((nh, nw), 255, np.uint8)
+    masque[b:b + sh, a:a + sw] = 0
+    try:
+        import lama
+        ok, raison = lama.check()
+        if not ok:
+            return jsonify({"error": "L'outil qui invente le décor (LaMa) n'est pas disponible : " + str(raison)}), 503
+        t0 = time.time()
+        rempli = lama.inpaint(Image.fromarray(large), masque)
+        logger.info(f"✨ Décor inventé par LaMa en {time.time() - t0:.1f} s ({sw}x{sh} → {nw}x{nh})")
+    except Exception as e:
+        logger.exception("Erreur pendant l'ajout de décor")
+        return jsonify({"error": f"Impossible d'inventer le décor : {e}"}), 500
+    sortie = np.asarray(rempli.convert("RGB")).copy()
+    sortie[b:b + sh, a:a + sw] = arr                                  # l'image d'origine reste intacte
+    resultat = Image.fromarray(sortie)
+    # même cadrage qu'avant : l'échelle d'affichage reste « echelle » ; sur un axe qui était trop petit, l'image remplit maintenant juste le cadre
+    base = max(iw / nw, ih / nh)
+    nouveau_zoom = _clamp_zoom(echelle / base)
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    name = uuid.uuid4().hex + ".jpg"
+    resultat.save(os.path.join(UPLOAD_DIR, name), quality=95)
+    return jsonify({"url": UPLOAD_URL_PREFIX + name, "w": nw, "h": nh, "zoom": round(nouveau_zoom, 4),
+                    "crop_x": 0.5 if manque_x >= 2 else cx, "crop_y": 0.5 if manque_y >= 2 else cy,
+                    "part": round(100 * part), "message": f"Décor ajouté ({round(100 * part)} % de l'image)."})
 
 
 @app.route("/api/erase/combler", methods=["POST"])
@@ -2662,6 +2718,9 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
                         <label for="zoom">🔍 Zoom : <span id="zoomVal">100</span> % <small>(molette sur l'image possible)</small></label>
                         <input type="range" id="zoom" min="50" max="300" value="100" />
                         <button type="button" class="secondary" id="cropReset">Recentrer / zoom 100 %</button>
+                        <button type="button" class="secondary" id="etendreBtn" title="Quand l'image est plus petite que le cadre (bandes floues), invente le décor qui manque">✨ Inventer le décor qui manque</button>
+                        <button type="button" class="secondary" id="etendreAnnuler" hidden>↩️ Revenir à l'image d'avant</button>
+                        <div class="taille-info doux" id="etendreInfo" hidden></div>
                     </div>
                         <div class="button-group">
                             <button class="secondary" onclick="generatePreview()">Rafraîchir</button>
@@ -3292,6 +3351,52 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             showPosters(document.getElementById('langSelect').value || 'all');
         });
         ['season', 'seasonEnabled', 'seasonSpecial'].forEach(id => document.getElementById(id).addEventListener('change', cohPlanifier));
+
+        // ===== ✨ Inventer le décor qui manque (bandes floues d'une image plus petite que le cadre) =====
+        let etendrePrecedent = null;
+        function etendreMessage(t) { const e = document.getElementById('etendreInfo'); e.textContent = t || ''; e.hidden = !t; }
+        document.getElementById('etendreBtn').addEventListener('click', async () => {
+            if (!selectedPoster) { etendreMessage('Choisis d’abord un poster.'); return; }
+            const b = document.getElementById('etendreBtn');
+            b.disabled = true;
+            etendreMessage('⏳ J’invente le décor qui manque… (10 à 30 secondes)');
+            try {
+                const res = await fetch('/api/etendre', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({
+                    poster_url: selectedPoster.url, border_style: styleCadre(),
+                    crop_x: document.getElementById('cropX').value / 100, crop_y: document.getElementById('cropY').value / 100,
+                    zoom: document.getElementById('zoom').value / 100})});
+                const d = await res.json();
+                if (d.error) { etendreMessage('❌ ' + d.error); return; }
+                if (d.rien) { etendreMessage(d.message); return; }
+                etendrePrecedent = {poster: selectedPoster, cropX: document.getElementById('cropX').value, cropY: document.getElementById('cropY').value,
+                                    zoom: document.getElementById('zoom').value};
+                const poster = {url: d.url, lang: '', upload: true};
+                selectedPoster = poster;
+                document.getElementById('cropX').value = Math.round(d.crop_x * 100);
+                document.getElementById('cropY').value = Math.round(d.crop_y * 100);
+                document.getElementById('zoom').value = Math.round(d.zoom * 100);
+                document.getElementById('zoomVal').textContent = Math.round(d.zoom * 100);
+                document.getElementById('etendreAnnuler').hidden = false;
+                etendreMessage('✅ ' + d.message + ' Le cadrage est resté le même ; tu peux maintenant déplacer ou zoomer sans bords flous.');
+                generatePreview();
+            } catch (err) {
+                etendreMessage('❌ ' + err.message);
+            } finally {
+                b.disabled = false;
+            }
+        });
+        document.getElementById('etendreAnnuler').addEventListener('click', () => {
+            if (!etendrePrecedent) return;
+            selectedPoster = etendrePrecedent.poster;
+            document.getElementById('cropX').value = etendrePrecedent.cropX;
+            document.getElementById('cropY').value = etendrePrecedent.cropY;
+            document.getElementById('zoom').value = etendrePrecedent.zoom;
+            document.getElementById('zoomVal').textContent = etendrePrecedent.zoom;
+            etendrePrecedent = null;
+            document.getElementById('etendreAnnuler').hidden = true;
+            etendreMessage('');
+            generatePreview();
+        });
 
         function selectPoster(poster) {
             selectedPoster = poster;
