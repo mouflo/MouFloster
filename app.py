@@ -2830,27 +2830,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
         </div>
     </div>
 
-    <!-- Fenêtre: pas encore de générique (MouFlopening) -->
-    <div class="modal-overlay" id="genModal">
-        <div class="modal" style="max-width:420px">
-            <div class="modal-head"><div><h3>🎵 Pas encore de générique</h3><div class="modal-sub" id="genTexte"></div></div></div>
-            <div class="lib-actions">
-                <a id="genOuvrir" class="mfg-retour">🎵 Ouvrir MouFlopening</a>
-                <button class="secondary" onclick="document.getElementById('genModal').classList.remove('show')">Plus tard</button>
-            </div>
-        </div>
-    </div>
 
-    <!-- Fenêtre: couverture envoyée dans MouFlanga -->
-    <div class="modal-overlay" id="mfgFiniModal">
-        <div class="modal" style="max-width:420px">
-            <div class="modal-head"><div><h3 id="mfgFiniTitre">✅ Couverture envoyée</h3><div class="modal-sub" id="mfgFiniTexte"></div></div></div>
-            <div class="lib-actions">
-                <a id="mfgFiniRetour" class="mfg-retour" hidden>↩ Retour à MouFlanga</a>
-                <button class="secondary" id="mfgFiniFermer" onclick="document.getElementById('mfgFiniModal').classList.remove('show')">OK</button>
-            </div>
-        </div>
-    </div>
 
     <!-- Fenêtre: couverture d'une série MouFlanga -->
     <div class="modal-overlay" id="mfgModal">
@@ -4184,12 +4164,7 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
         function venueFini() {
             venueBandeau(true);
             if (!venueOpening.retour) return;
-            document.getElementById('mfgFiniTitre').textContent = '✅ Poster envoyé';
-            document.getElementById('mfgFiniTexte').textContent = 'Le poster de « ' + venueOpening.q + ' » est dans la médiathèque.';
-            const a = document.getElementById('mfgFiniRetour');
-            a.hidden = false; a.href = venueOpening.retour; a.textContent = '↩ Retour à MouFlopening';
-            document.getElementById('mfgFiniFermer').textContent = 'Rester dans MouFloster';
-            document.getElementById('mfgFiniModal').classList.add('show');
+            MouConfirm('Poster envoyé 🎉\n\nRevenir à MouFlopening ?', {ok: 'Revenir', annuler: 'Rester ici'}).then(oui => { if (oui) location.href = venueOpening.retour; });
         }
         document.addEventListener('DOMContentLoaded', async () => {
             if (!venueOpening.de || !venueOpening.q) return;
@@ -4256,13 +4231,9 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
         }
         // Fenêtre de fin : bien visible, avec le bouton pour revenir sur la série dans MouFlanga
         function mfgFini(nom, sauvegarde) {
-            document.getElementById('mfgFiniTitre').textContent = '✅ Couverture envoyée';
-            document.getElementById('mfgFiniRetour').textContent = '↩ Retour à MouFlanga';
-            document.getElementById('mfgFiniTexte').textContent = 'La couverture de « ' + nom + ' » est dans MouFlanga' + (sauvegarde ? ' (l’ancienne est sauvegardée).' : '.');
-            const a = document.getElementById('mfgFiniRetour');
-            a.hidden = !mfgVenue.retour; if (mfgVenue.retour) a.href = mfgVenue.retour;
-            document.getElementById('mfgFiniFermer').textContent = mfgVenue.retour ? 'Rester dans MouFloster' : 'OK';
-            document.getElementById('mfgFiniModal').classList.add('show');
+            const texte = 'Couverture envoyée 🎉\n\nLa couverture de « ' + nom + ' » est dans MouFlanga' + (sauvegarde ? ' (l’ancienne est sauvegardée).' : '.');
+            if (!mfgVenue.retour) return MouAlert(texte);
+            return MouConfirm(texte + '\n\nRevenir à MouFlanga ?', {ok: 'Revenir', annuler: 'Rester ici'}).then(oui => { if (oui) location.href = mfgVenue.retour; });
         }
         // Adresse de MouFlopening pour le navigateur : celle du réseau local ou l'adresse perso selon d'où l'on vient ;
         // rien de réglé mais MouFlopening installé sur ce serveur : même machine, son port
@@ -4282,13 +4253,10 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
         async function proposerGenerique(titre, dossier, raison) {
             const base = await adresseMouflopening();
             if (!base) return;
-            document.getElementById('genTexte').textContent = raison
-                ? 'MouFlopening n’a pas trouvé seul de générique pour « ' + titre + ' » (' + raison + '). Tu peux le choisir à l’écoute : il s’ouvre directement sur ce titre.'
-                : '« ' + titre + ' » n’a pas encore de générique dans la médiathèque. MouFlopening peut le trouver : il s’ouvre directement sur ce titre et lance la recherche.';
-            const ouvrir = document.getElementById('genOuvrir');
-            ouvrir.href = lienMouflopening(base, dossier);
-            ouvrir.onclick = garderFiche;
-            document.getElementById('genModal').classList.add('show');
+            const texte = raison
+                ? 'Pas encore de générique 🎵\n\nMouFlopening n’a pas trouvé seul de générique pour « ' + titre + ' » (' + raison + '). Tu peux le choisir à l’écoute : il s’ouvre directement sur ce titre.\n\nAller sur MouFlopening ?'
+                : 'Pas encore de générique 🎵\n\n« ' + titre + ' » n’a pas encore de générique dans la médiathèque. MouFlopening peut le trouver : il s’ouvre directement sur ce titre et lance la recherche.\n\nAller sur MouFlopening ?';
+            if (await MouConfirm(texte, {ok: 'Aller', annuler: 'Rester ici'})) { garderFiche(); location.href = lienMouflopening(base, dossier); }
         }
         // Après l'envoi d'un poster : MouFlopening cherche lui-même le générique validé, sans quitter la page.
         // Il n'est proposé de l'ouvrir que s'il n'a rien trouvé (ou s'il ne répond pas).
