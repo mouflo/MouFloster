@@ -3,6 +3,9 @@
 La version affichée est « 1.0 » suivie du nombre de mises à jour depuis le passage en 1.0 (et de l'empreinte du commit).
 L'historique d'avant ce fichier se lit dans les commits du dépôt.
 
+## 10 novembre 2026
+- 🎵 **La fenêtre « Pas encore de générique » ne s'affichait plus quand MouFloster est ouvert par une adresse perso** (https://moufloster.…) sans adresse réglée pour MouFlopening : la page ne faisait rien, sans le dire. Elle prend maintenant la même adresse avec le nom « mouflopening », et si elle ne peut vraiment pas, elle l'écrit en rouge au lieu de se taire.
+
 ## 6 novembre 2026
 - 🔧 **Correction : le bouton Rechercher ne répondait plus** après le changement des fenêtres. Les sauts de ligne des nouveaux messages cassaient le script de la page (erreur de syntaxe). Vérifié cette fois en chargeant le script dans un vrai navigateur.
 - 🪟 **Mêmes fenêtres entre MouFloster et MouFlopening** : « Aller sur MouFlopening ? » (pas encore de générique), « Revenir à MouFlopening ? » (poster envoyé) et « Revenir à MouFlanga ? » (couverture envoyée) utilisent maintenant la fenêtre du kit commun (`MouConfirm`, boutons « Aller / Revenir » et « Rester ici »), identique à celle de MouFlopening. Avant, MouFloster avait ses propres fenêtres et MouFlopening la fenêtre native du navigateur pour « Revenir à … ? ».

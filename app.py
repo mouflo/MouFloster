@@ -4244,7 +4244,9 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
             const local = /^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h) || /\.(local|lan|home)$/.test(h);
             const base = local ? (a.url || a.url_externe) : (a.url_externe || a.url);
             if (base) return base.replace(/\/$/, '');
-            return a.ici && local ? location.protocol + '//' + h + ':' + a.port : '';
+            if (a.ici && local) return location.protocol + '//' + h + ':' + a.port;
+            // Ouvert par une adresse perso (https://moufloster.…) sans adresse réglée pour MouFlopening : même adresse avec son nom
+            return /moufloster/i.test(h) ? location.origin.replace(/moufloster/i, 'mouflopening') : '';
         }
         function lienMouflopening(base, dossier) {
             return base + '/?dossier=' + encodeURIComponent(dossier) + '&de=MouFloster&retour=' + encodeURIComponent(location.origin + location.pathname + '?reprise=1');
@@ -4252,7 +4254,10 @@ body.copain #mouSettingsOpen, body.copain #mouLogOpen, body.copain button[onclic
         // Pas encore de générique : proposer d'ouvrir MouFlopening directement sur ce titre (raison : pourquoi il n'a rien trouvé seul)
         async function proposerGenerique(titre, dossier, raison) {
             const base = await adresseMouflopening();
-            if (!base) return;
+            if (!base) {                                    // avant : rien ne s'affichait, on ne savait pas pourquoi
+                showMessage('🎵 « ' + titre + ' » n’a pas encore de générique, mais je ne connais pas l’adresse de MouFlopening depuis cette page : ⚙️ Réglages → Connexions → MouFlopening.', 'error');
+                return;
+            }
             const texte = raison
                 ? 'Pas encore de générique 🎵\\n\\nMouFlopening n’a pas trouvé seul de générique pour « ' + titre + ' » (' + raison + '). Tu peux le choisir à l’écoute : il s’ouvre directement sur ce titre.\\n\\nAller sur MouFlopening ?'
                 : 'Pas encore de générique 🎵\\n\\n« ' + titre + ' » n’a pas encore de générique dans la médiathèque. MouFlopening peut le trouver : il s’ouvre directement sur ce titre et lance la recherche.\\n\\nAller sur MouFlopening ?';
