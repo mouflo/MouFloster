@@ -3,6 +3,14 @@
 La version affichée est « 1.0 » suivie du nombre de mises à jour depuis le passage en 1.0 (et de l'empreinte du commit).
 L'historique d'avant ce fichier se lit dans les commits du dépôt.
 
+## 13 novembre 2026
+- 🩹 **Combler un texte avec une 2ᵉ image : le résultat est enfin propre** (essayé sur le poster d'Arena tome 1 avec l'image du personnage). Quatre défauts corrigés :
+  - **Un PNG détouré (personnage seul, fond transparent) garde sa transparence.** Avant, l'envoi aplatissait le fond sur du blanc et le comblage recopiait ce blanc comme du décor. Maintenant la copie transparente est gardée à côté (`<nom>.png`, nettoyée après 7 jours) et seuls les pixels du dessin servent ; les points de repère ne sont pas pris sur la silhouette.
+  - **Plus de restes dorés ni de « fantômes » du texte** : le morceau recopié va jusqu'au bord de la zone (il était à moitié fondu, ce qui laissait une trace du texte), et la partie confiée à l'effaceur déborde de 4 px sur la jonction.
+  - **Plus de faux morceaux** : une transformation secondaire n'est crue qu'à moins de 300 px des points de repère qui la prouvent (la principale, 700 px), un morceau de moins de 3 % de la zone est abandonné, un îlot de moins de 400 px aussi, et un morceau qui ne prolonge pas la couleur du poster à la jonction est refusé (bout de manteau rouge posé sur un jean, triangle lilas sur un manteau).
+  - **Effaceur (LaMa) plus net** : chaque morceau éloigné est rempli avec sa propre fenêtre (au plus 160 px de décor autour) au lieu d'une seule fenêtre réduite à 40 % ; un trait fin du masque (bord d'une flèche, d'une lettre) ne disparaît plus quand la fenêtre est réduite. Vaut aussi pour « Effacer la zone coloriée ». « Inventer le décor qui manque » garde l'ancien fonctionnement (une fenêtre, grand contexte).
+  - Tests : `tests/test_comblage.py` (source détourée, envoi), `tests/test_lama_groupes.py` (nouveau).
+
 ## 10 novembre 2026
 - 🎵 **La fenêtre « Pas encore de générique » ne s'affichait plus quand MouFloster est ouvert par une adresse perso** (https://moufloster.…) sans adresse réglée pour MouFlopening : la page ne faisait rien, sans le dire. Elle prend maintenant la même adresse avec le nom « mouflopening », et si elle ne peut vraiment pas, elle l'écrit en rouge au lieu de se taire.
 

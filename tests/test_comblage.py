@@ -107,6 +107,41 @@ class CombleTest(unittest.TestCase):
         self.assertEqual(int(collee.sum()) + int((r["reste"] > 0).sum()), int((self.masque > 0).sum()))
         self.assertAlmostEqual(r["rapport"]["couvert"] + r["rapport"]["reste"], 100.0, delta=0.2)
 
+    def _detourage(self, fond_voyant=(255, 0, 255)):
+        """La source en PNG détouré : seul le personnage est opaque ; dessous, une couleur voyante qui ne doit JAMAIS se retrouver dans le poster."""
+        _, figure = _personnage(np.random.default_rng(5))
+        rgb = self.source.copy()
+        rgb[figure == 0] = fond_voyant
+        return np.dstack([rgb, figure])
+
+    def test_un_detourage_ne_colle_que_le_personnage(self):
+        r = comblage.combler(self.poster, self.masque, self._detourage())
+        self.assertGreater(r["rapport"]["couvert"], 25)                       # le personnage est retrouvé et recopié comme avec l'image entière
+        magenta = (r["image"][..., 0] >= 250) & (r["image"][..., 2] >= 250) & (r["image"][..., 1] <= 10)     # le personnage n'a aucune couleur aussi vive
+        self.assertEqual(int(magenta.sum()), 0)                                  # le fond transparent n'est jamais recopié
+
+    def test_un_detourage_a_la_meme_qualite_que_l_image_entiere(self):
+        entiere = comblage.combler(self.poster, self.masque, self.source)
+        detouree = comblage.combler(self.poster, self.masque, self._detourage((255, 255, 255)))
+        zone = self.masque > 0
+        e1 = np.abs(entiere["image"].astype(int) - self.vrai.astype(int)).max(axis=2)[zone & (entiere["reste"] == 0)].mean()
+        e2 = np.abs(detouree["image"].astype(int) - self.vrai.astype(int)).max(axis=2)[zone & (detouree["reste"] == 0)].mean()
+        self.assertLess(e2, e1 + 4.0)
+
+    def test_png_entierement_opaque_est_traite_comme_une_image_normale(self):
+        opaque = np.dstack([self.source, np.full(self.source.shape[:2], 255, np.uint8)])
+        r = comblage.combler(self.poster, self.masque, opaque)
+        self.assertGreater(r["rapport"]["couvert"], 25)
+
+    def test_la_zone_confiee_a_l_effaceur_deborde_sur_la_jonction(self):
+        r = comblage.combler(self.poster, self.masque, self.source)
+        pas_collee = (self.masque > 0) & (r["reste"] == 0)
+        # un pixel collé n'est jamais à moins de GRAIN_RACCORD pixels d'un pixel déjà confié à l'effaceur sans être lui-même confié
+        voisins = cv2.dilate((r["reste"] > 0).astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+        self.assertTrue(pas_collee.sum() > 0)
+        self.assertTrue(((r["reste"] > 0) <= (self.masque > 0)).all())
+        self.assertGreaterEqual(int(voisins.sum()), int((r["reste"] > 0).sum()))
+
     def test_une_image_sans_rapport_ne_couvre_rien(self):
         autre = np.random.default_rng(99).integers(0, 255, (600, 800, 3), dtype=np.uint8)
         r = comblage.combler(self.poster, self.masque, autre)
@@ -167,6 +202,48 @@ class RouteTest(Base):
         self.assertEqual(r.status_code, 422)
         self.assertIn("ne montre pas", r.get_json()["error"])
         self.assertEqual(list(Path(self.tmp.name).iterdir()), [])
+
+    def _png_detoure(self):
+        _, figure = _personnage(np.random.default_rng(5))
+        rgb = self.source.copy()
+        rgb[figure == 0] = (255, 0, 255)
+        b = io.BytesIO()
+        Image.fromarray(np.dstack([rgb, figure]), "RGBA").save(b, "PNG")
+        return b.getvalue()
+
+    def test_l_envoi_garde_la_transparence_a_part(self):
+        self.connecter()
+        with mock.patch.object(self.A, "UPLOAD_DIR", self.tmp.name):
+            r = self.c.post("/api/upload", data={"file": (io.BytesIO(self._png_detoure()), "perso.png")}, content_type="multipart/form-data")
+            d = r.get_json()
+            self.assertEqual(r.status_code, 200, d)
+            nom = d["url"].rsplit("/", 1)[1]
+            self.assertTrue(nom.endswith(".jpg"))
+            copie = Path(self.tmp.name) / (nom[:-4] + ".png")
+            self.assertTrue(copie.is_file())
+            self.assertEqual(Image.open(copie).mode, "RGBA")
+            self.assertLess(np.asarray(Image.open(copie))[..., 3].min(), 10)
+            # un PNG sans transparence n'en fait pas
+            b = io.BytesIO()
+            Image.fromarray(self.source).save(b, "PNG")
+            d2 = self.c.post("/api/upload", data={"file": (io.BytesIO(b.getvalue()), "plein.png")}, content_type="multipart/form-data").get_json()
+            self.assertFalse((Path(self.tmp.name) / (d2["url"].rsplit("/", 1)[1][:-4] + ".png")).exists())
+
+    def test_comblage_avec_un_detourage_envoye(self):
+        self.connecter()
+        faux_effaceur = mock.Mock(side_effect=lambda img, m, grossir=True: (img, "faux", ""))
+        with mock.patch.object(self.A, "UPLOAD_DIR", self.tmp.name):
+            url = self.c.post("/api/upload", data={"file": (io.BytesIO(self._png_detoure()), "perso.png")},
+                              content_type="multipart/form-data").get_json()["url"]
+            with mock.patch.object(self.A, "load_source_image", side_effect=lambda u, t: Image.fromarray(self.poster) if "poster" in u else
+                                   self.A._load_source_image(u, t)), mock.patch.object(self.A, "inpaint_region", faux_effaceur):
+                r = self.c.post("/api/erase/combler", json={"poster_url": "poster", "source_url": url, "mask": _png_data(self.masque)})
+        d = r.get_json()
+        self.assertEqual(r.status_code, 200, d)
+        self.assertGreater(d["rapport"]["couvert"], 25)
+        resultat = np.asarray(Image.open(Path(self.tmp.name) / d["url"].rsplit("/", 1)[1]).convert("RGB")).astype(int)
+        magenta = (resultat[..., 0] >= 240) & (resultat[..., 2] >= 240) & (resultat[..., 1] <= 25)           # (le JPEG fait dériver un peu les couleurs)
+        self.assertEqual(int(magenta.sum()), 0)
 
     def test_trace_invalide_ou_vide(self):
         self.connecter()

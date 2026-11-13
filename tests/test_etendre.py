@@ -20,7 +20,7 @@ class FauxLama:
         return True, ""
 
     @staticmethod
-    def inpaint(img, masque):
+    def inpaint(img, masque, grouper=True):
         a = np.asarray(img).copy()
         a[masque > 0] = (10, 200, 30)
         return Image.fromarray(a)

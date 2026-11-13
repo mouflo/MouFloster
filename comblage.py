@@ -10,6 +10,9 @@ séparément. Le calcul :
   4. dans la zone peinte, chaque point prend les pixels de la transformation la plus fiable autour de lui (bords fondus, couleur recalée) ;
   5. ce que la 2e image ne couvre pas (ou dont aucune transformation n'est sûre) est rendu à l'appelant : l'effaceur (LaMa) le comble.
 Rien n'est écrit sur le disque ici ; l'appelant enregistre le résultat comme n'importe quelle étape d'effacement.
+
+La 2e image peut être un DÉTOURAGE (PNG transparent : un personnage seul) : seuls ses pixels opaques comptent, le fond transparent n'est
+jamais recopié ni comparé ; elle peut aussi ne montrer qu'un morceau de l'image (un personnage en entier mais pas le décor).
 """
 
 import cv2
@@ -26,6 +29,12 @@ DISTANCE_MAX = 260             # au-delà de cette distance (px) du bord de la z
 MARGE = 160                    # zone de travail autour de la zone peinte
 RAYON_REPERES = 250            # les corrections (angle, netteté, couleur) se calent sur les pixels à moins de ce rayon (px) de la zone peinte
 AFFINER, NETTETE, COULEUR, RACCORD = True, True, True, True        # chaque correction peut être coupée (essais de mesure)
+PART_MIN_MODELE = 0.03         # un morceau de transformation qui couvre moins de 3 % de la zone est trop incertain : l'effaceur s'en charge
+MORCEAU_MIN = 400              # surface (px) en dessous de laquelle un îlot recopié (confetti) est abandonné à l'effaceur
+RAYON_APPUI = 300              # une transformation secondaire n'est crue qu'à moins de 300 px des points de repère qui la prouvent (ailleurs, elle peut être fausse)
+RAYON_APPUI_PRINCIPAL = 700    # la principale (celle qui a le plus de points : le gros de l'image) se prolonge plus loin, sous un texte par exemple
+JONCTION_MAX = 38              # écart de couleur moyen (0-255) toléré de part et d'autre de la jonction entre un morceau collé et le poster intact
+GRAIN_RACCORD = 4              # px : la zone confiée à l'effaceur déborde d'autant sur ce qui a été recopié (jonction, bords flous)
 MODE_COULEUR = "cases"         # « cases » (selon la nuance), « polynome » (courbe globale) ou « decalage » (un seul décalage moyen)
 
 
@@ -37,15 +46,40 @@ def _petit(arr, cote):
     return arr, s
 
 
-def transformations(poster, masque, source):
+def preparer_source(source):
+    """(RGB, présence) : présence = pixels réellement dessinés (None si l'image est entière). Un PNG détouré (4e canal) a un fond transparent :
+    il n'est pas du contenu. La frange semi-transparente est écartée, et la couleur des pixels transparents est celle du pixel opaque le plus
+    proche (sinon le blanc ou le noir du fond déteint sur les bords à chaque rééchantillonnage)."""
+    if source.ndim == 3 and source.shape[2] == 4:
+        alpha = source[..., 3]
+        rgb = np.ascontiguousarray(source[..., :3])
+        if (alpha >= 250).all():
+            return rgb, None
+        sur = cv2.erode((alpha >= 250).astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+        if sur.sum() < 0.01 * sur.size:
+            return rgb, None                                     # presque rien d'opaque : mieux vaut l'image telle quelle que rien
+        dist, labels = cv2.distanceTransformWithLabels((~sur).astype(np.uint8), cv2.DIST_L2, 5, labelType=cv2.DIST_LABEL_PIXEL)
+        ys, xs = np.where(sur)
+        idx = np.clip(labels - 1, 0, len(ys) - 1)
+        proche = rgb[ys[idx], xs[idx]]
+        return np.where(sur[..., None], rgb, proche), sur
+    return source[..., :3] if source.ndim == 3 else source, None
+
+
+def transformations(poster, masque, source, presence=None):
     """Transformations source → poster (matrices 3×3, pleine résolution) : [{"M", "points", "echelle", "rotation"}].
-    poster, source : tableaux RGB. masque : tableau 0/255 de la taille du poster (zone à combler)."""
+    poster, source : tableaux RGB. masque : tableau 0/255 de la taille du poster (zone à combler).
+    presence : tableau booléen de la taille de la source (pixels dessinés d'un détourage), sinon None."""
     p, sp = _petit(poster, TAILLE_TRAVAIL)
     s, ss = _petit(source, TAILLE_TRAVAIL)
+    permis_s = None
+    if presence is not None:                                     # pas de points de repère sur la silhouette du détourage (son bord n'existe pas dans le poster)
+        pr = cv2.resize(presence.astype(np.uint8) * 255, (s.shape[1], s.shape[0]), interpolation=cv2.INTER_NEAREST)
+        permis_s = cv2.erode(pr, np.ones((9, 9), np.uint8))
     mk = cv2.resize(masque, (p.shape[1], p.shape[0]), interpolation=cv2.INTER_NEAREST)
     permis = np.where(cv2.dilate(mk, np.ones((15, 15), np.uint8)) > 0, 0, 255).astype(np.uint8)      # pas de points sur le texte
     sift = cv2.SIFT_create(5000)
-    kp_s, d_s = sift.detectAndCompute(cv2.cvtColor(s, cv2.COLOR_RGB2GRAY), None)
+    kp_s, d_s = sift.detectAndCompute(cv2.cvtColor(s, cv2.COLOR_RGB2GRAY), permis_s)
     kp_p, d_p = sift.detectAndCompute(cv2.cvtColor(p, cv2.COLOR_RGB2GRAY), permis)
     if d_s is None or d_p is None or len(kp_s) < MIN_POINTS or len(kp_p) < MIN_POINTS:
         return []
@@ -67,7 +101,8 @@ def transformations(poster, masque, source):
             grand_vers_petit_s = np.diag([ss, ss, 1.0])
             Mg = petit_vers_grand_p @ np.vstack([M, [0, 0, 1.0]]) @ grand_vers_petit_s
             sortie.append({"M": Mg, "points": int(inl.sum()), "echelle": echelle * ss / sp,
-                           "rotation": float(np.degrees(np.arctan2(M[1, 0], M[0, 0])))})
+                           "rotation": float(np.degrees(np.arctan2(M[1, 0], M[0, 0]))),
+                           "appui": (dst[inl] / sp).astype(np.float32)})                      # où ces points tombent dans le poster (pleine résolution)
         paires = [m for m, ok in zip(paires, inl) if not ok]                # on enlève ces points : le modèle suivant est un autre élément
     return sortie
 
@@ -228,6 +263,20 @@ def _raccord(P, M, zone_ring, trou):
     return np.clip(champ, -35, 35).astype(np.float32)
 
 
+def _jonction_ok(img_flou, poster_flou, morceau, trou):
+    """Un morceau recopié doit PROLONGER le poster intact qui le touche : la couleur moyenne juste dedans et juste dehors de la jonction
+    doit être la même. Sinon (un bout de manteau rouge posé sur un jean), c'est une transformation qui a « accroché » à tort. Un morceau
+    qui ne touche aucun pixel intact (entouré d'autres parties à combler) n'a pas de jonction à juger : il est gardé."""
+    k = np.ones((11, 11), np.uint8)
+    dehors = (cv2.dilate(morceau.astype(np.uint8), k) > 0) & ~morceau & ~trou
+    if dehors.sum() < 80:
+        return True
+    dedans = morceau & (cv2.dilate(dehors.astype(np.uint8), k) > 0)
+    if dedans.sum() < 40:
+        return True
+    return float(np.abs(img_flou[dedans].mean(axis=0) - poster_flou[dehors].mean(axis=0)).max()) <= JONCTION_MAX
+
+
 def _prolonger(carte, valide):
     """Chaque point prend la valeur du point valide LE PLUS PROCHE : un trou au milieu du personnage hérite de la concordance du personnage
     qui l'entoure, un trou sur le fond hérite de celle du fond (où la 2e image ne ressemble pas au poster)."""
@@ -260,14 +309,15 @@ def combler(poster, masque, source):
     trou = masque[y0:y1, x0:x1] > 0
     loin = ~(cv2.dilate(trou.astype(np.uint8), np.ones((25, 25), np.uint8)) > 0)      # on juge la ressemblance loin du texte
     vides = {"image": poster.copy(), "reste": masque, "rapport": {"couvert": 0.0, "reste": 100.0, "morceaux": [], "modeles": 0}}
-    modeles = transformations(poster, masque, source)
+    source, presence = preparer_source(source)
+    modeles = transformations(poster, masque, source, presence)
     if not modeles:
         return vides
     d_trou = cv2.distanceTransform((~trou).astype(np.uint8), cv2.DIST_L2, 5)
     decale = np.array([[1, 0, -x0], [0, 1, -y0], [0, 0, 1.0]])
-    un = np.full(source.shape[:2], 255, np.uint8)
+    un = np.full(source.shape[:2], 255, np.uint8) if presence is None else presence.astype(np.uint8) * 255
     fiabilites, images, couvertures = [], [], []
-    for mod in modeles:
+    for rang, mod in enumerate(modeles):
         Mr = (decale @ mod["M"])[:2]
         Wk = cv2.warpAffine(source, Mr, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0))
         cov = cv2.warpAffine(un, Mr, (w, h), flags=cv2.INTER_LINEAR) > 250
@@ -284,6 +334,12 @@ def combler(poster, masque, source):
         lisse = cv2.GaussianBlur(accord, (0, 0), LISSAGE_ACCORD) / np.maximum(cv2.GaussianBlur(valide.astype(np.float32), (0, 0), LISSAGE_ACCORD), 1e-6)
         fiab = _prolonger(lisse, valide)
         fiab[~cov] = 0.0
+        if len(mod.get("appui", [])):
+            repere = np.ones((h, w), np.uint8)
+            px = np.clip(np.round(mod["appui"][:, 0]).astype(int) - x0, 0, w - 1)
+            py = np.clip(np.round(mod["appui"][:, 1]).astype(int) - y0, 0, h - 1)
+            repere[py, px] = 0
+            fiab[cv2.distanceTransform(repere, cv2.DIST_L2, 5) > (RAYON_APPUI_PRINCIPAL if rang == 0 else RAYON_APPUI)] = 0.0
         # même rendu que le poster : netteté, couleurs (courbe complète), puis raccord des teintes avec le pourtour de la zone
         zone = pres & (ecart < 90)                                            # voisins qui se correspondent (large : la couleur peut différer)
         decal = np.zeros(3, np.float32)
@@ -309,13 +365,34 @@ def combler(poster, masque, source):
     choisi = trou & (valeur >= FIABILITE_MIN)
     resultat = P.copy()
     morceaux = []
-    for k, mod in enumerate(modeles):
+    # un morceau trop petit ou trop éparpillé (une transformation peu sûre qui « accroche » ici ou là) abîme plus qu'il n'aide : l'effaceur le refait
+    retenu = np.zeros(trou.shape, bool)
+    selections = []
+    P_flou = cv2.GaussianBlur(P, (0, 0), 2.0)
+    for k in range(len(modeles)):
         sel = choisi & (meilleur == k)
+        if sel.sum() < max(30, PART_MIN_MODELE * surface):
+            selections.append(np.zeros(trou.shape, bool))
+            continue
+        nb, lab, stats, _ = cv2.connectedComponentsWithStats(sel.astype(np.uint8), connectivity=8)
+        garde = np.zeros(nb, bool)
+        garde[1:] = stats[1:, cv2.CC_STAT_AREA] >= MORCEAU_MIN
+        flou_k = cv2.GaussianBlur(images[k], (0, 0), 2.0)
+        for c in range(1, nb):                                                # un morceau qui ne prolonge pas le poster autour de lui est un faux raccord
+            if garde[c] and not _jonction_ok(flou_k, P_flou, lab == c, trou):
+                garde[c] = False
+        sel = garde[lab]
+        selections.append(sel)
+        retenu |= sel
+    choisi = retenu
+    for k, mod in enumerate(modeles):
+        sel = selections[k]
         n = int(sel.sum())
         if n < 30:
             continue
-        # dedans : bords légèrement fondus ; dehors (poster intact) : long fondu, seulement là où la 2e image ressemble au poster
-        dedans = cv2.GaussianBlur(sel.astype(np.float32), (0, 0), 2.0) * trou
+        # dedans : plein jusqu'au bord (un bord à moitié fondu laisserait un fantôme du texte), puis un petit fondu ; dehors (poster intact) :
+        # long fondu, seulement là où la 2e image ressemble au poster
+        dedans = np.maximum(sel.astype(np.float32), cv2.GaussianBlur(sel.astype(np.float32), (0, 0), 2.0)) * trou
         dehors = cv2.GaussianBlur(sel.astype(np.float32), (0, 0), FONDU_SIGMA) * (~trou) * (fiabilites[k] >= FIABILITE_MIN) * couvertures[k]
         alpha = np.clip(dedans + dehors, 0.0, 1.0)[:, :, None].astype(np.float32)
         resultat = resultat * (1 - alpha) + images[k] * alpha
@@ -324,7 +401,11 @@ def combler(poster, masque, source):
     sortie = poster.copy()
     sortie[y0:y1, x0:x1] = np.clip(resultat, 0, 255).astype(np.uint8)
     reste = np.zeros((H, W), np.uint8)
-    reste[y0:y1, x0:x1] = (trou & ~choisi).astype(np.uint8) * 255
+    a_refaire = (trou & ~choisi).astype(np.uint8)
+    if a_refaire.any() and GRAIN_RACCORD:
+        k = 2 * GRAIN_RACCORD + 1
+        a_refaire = cv2.dilate(a_refaire, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))) * trou.astype(np.uint8)
+    reste[y0:y1, x0:x1] = a_refaire * 255
     couvert = int(choisi.sum())
     rapport = {"couvert": round(100.0 * couvert / surface, 1), "reste": round(100.0 * (surface - couvert) / surface, 1),
                "morceaux": sorted(morceaux, key=lambda m: -m["part"]), "modeles": len(modeles)}

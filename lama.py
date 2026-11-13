@@ -143,21 +143,44 @@ def _run_isolated(rgb: np.ndarray, mask: np.ndarray) -> np.ndarray:
         return np.load(dst)
 
 
-def inpaint(img: Image.Image, mask: np.ndarray) -> Image.Image:
-    """
-    img: image RGB pleine résolution; mask: HxW uint8 (255 = zone à effacer, déjà un peu élargie).
-    Seule la zone autour du masque est traitée; le reste de l'image n'est pas touché (même résolution, mêmes pixels).
-    """
-    arr = np.array(img.convert("RGB"))
-    h, w = mask.shape
-    ys, xs = np.where(mask > 0)
+GROUPE_ECART = 60   # deux morceaux de masque distants de moins de 2 × 60 px sont remplis ensemble ; plus loin, chacun a son propre calcul
+CONTEXTE_MAX = 160  # px de décor autour d'un morceau : assez pour imiter, sans noyer le morceau dans une fenêtre réduite
+GROUPES_MAX = 8
+
+
+def _groupes(mask: np.ndarray) -> list:
+    """Morceaux de masque regroupés par proximité : [masque 0/1 de chaque groupe]. Un petit morceau loin des autres est rempli avec
+    SA propre fenêtre (à la résolution d'origine) au lieu d'être noyé dans une immense fenêtre réduite."""
+    import cv2
+    m = (mask > 0).astype(np.uint8)
+    echelle = 4
+    petit = cv2.resize(m * 255, (max(1, m.shape[1] // echelle), max(1, m.shape[0] // echelle)), interpolation=cv2.INTER_AREA)
+    petit = (petit > 0).astype(np.uint8)
+    ecart = GROUPE_ECART
+    while True:
+        k = max(1, 2 * ecart // echelle) | 1
+        large = cv2.dilate(petit, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k)))
+        n, lab = cv2.connectedComponents(large, connectivity=8)
+        if n - 1 <= GROUPES_MAX or ecart > 4000:
+            break
+        ecart *= 2                                           # trop de groupes : on rapproche plus large
+    lab = cv2.resize(lab.astype(np.float32), (m.shape[1], m.shape[0]), interpolation=cv2.INTER_NEAREST).astype(np.int32)
+    return [((lab == g) & (m > 0)) for g in range(1, n) if ((lab == g) & (m > 0)).any()]
+
+
+def _remplir_groupe(arr: np.ndarray, en_attente: np.ndarray, groupe: np.ndarray, contexte=CONTEXTE_MAX) -> None:
+    """Remplit (dans arr, sur place) les pixels du groupe. `en_attente` : tout ce qui reste à remplir (les autres groupes aussi : leur
+    contenu d'origine, texte compris, ne doit pas servir de modèle) ; le groupe en est retiré une fois fait."""
+    import cv2
+    h, w = en_attente.shape
+    ys, xs = np.where(groupe)
     bw, bh = xs.max() - xs.min() + 1, ys.max() - ys.min() + 1
-    margin = max(64, int(0.5 * max(bw, bh)))  # du contexte autour: c'est lui qui sert de modèle au remplissage
+    margin = max(64, int(0.5 * max(bw, bh)) if contexte is None else min(contexte, int(0.5 * max(bw, bh))))  # du contexte autour: c'est lui qui sert de modèle au remplissage
     x0, x1 = max(0, xs.min() - margin), min(w, xs.max() + margin + 1)
     y0, y1 = max(0, ys.min() - margin), min(h, ys.max() + margin + 1)
 
     crop = arr[y0:y1, x0:x1]
-    mcrop = mask[y0:y1, x0:x1]
+    mcrop = (en_attente[y0:y1, x0:x1] > 0).astype(np.uint8) * 255
     ch, cw = mcrop.shape
 
     side = max_side()
@@ -165,17 +188,37 @@ def inpaint(img: Image.Image, mask: np.ndarray) -> Image.Image:
     if scale < 1.0:
         small_size = (max(8, round(cw * scale)), max(8, round(ch * scale)))
         small = np.array(Image.fromarray(crop).resize(small_size, Image.Resampling.LANCZOS))
-        msmall = np.array(Image.fromarray(mcrop).resize(small_size, Image.Resampling.NEAREST))
+        # un trait fin (flèche, bord d'une lettre) disparaît d'un masque réduit « au plus proche » : tout pixel touché par le masque reste masqué
+        msmall = (cv2.resize(mcrop, small_size, interpolation=cv2.INTER_AREA) > 0).astype(np.uint8) * 255
+        msmall = cv2.dilate(msmall, np.ones((3, 3), np.uint8))
         filled_small = _run_isolated(small, msmall)
         filled = np.array(Image.fromarray(filled_small).resize((cw, ch), Image.Resampling.LANCZOS))
     else:
         filled = _run_isolated(crop, mcrop)
 
-    # On ne remplace que la zone effacée (bord très légèrement adouci pour une jonction invisible)
-    soft = np.array(Image.fromarray(mcrop).filter(ImageFilter.GaussianBlur(2))).astype("float32") / 255.0
+    # On ne remplace que la zone de ce groupe (bord très légèrement adouci pour une jonction invisible)
+    commit = groupe[y0:y1, x0:x1].astype(np.uint8) * 255
+    soft = np.array(Image.fromarray(commit).filter(ImageFilter.GaussianBlur(2))).astype("float32") / 255.0
     soft = soft[..., None]
-    blended = (crop.astype("float32") * (1 - soft) + filled.astype("float32") * soft).round().astype("uint8")
-    arr[y0:y1, x0:x1] = blended
+    arr[y0:y1, x0:x1] = (crop.astype("float32") * (1 - soft) + filled.astype("float32") * soft).round().astype("uint8")
+    en_attente[groupe] = 0
+
+
+def inpaint(img: Image.Image, mask: np.ndarray, grouper=True) -> Image.Image:
+    """
+    img: image RGB pleine résolution; mask: HxW uint8 (255 = zone à effacer, déjà un peu élargie).
+    Seule la zone autour du masque est traitée; le reste de l'image n'est pas touché (même résolution, mêmes pixels).
+    Les morceaux de masque éloignés les uns des autres sont remplis chacun avec sa propre fenêtre (voir _groupes), avec au plus CONTEXTE_MAX px
+    de décor autour. grouper=False : une seule fenêtre et tout le contexte possible (agrandir une image : les bandes ajoutées ont besoin de voir
+    l'image des deux côtés).
+    """
+    arr = np.array(img.convert("RGB"))
+    en_attente = (mask > 0).astype(np.uint8) * 255
+    if not grouper:
+        _remplir_groupe(arr, en_attente, mask > 0, contexte=None)
+        return Image.fromarray(arr)
+    for groupe in sorted(_groupes(mask), key=lambda g: -int(g.sum())):
+        _remplir_groupe(arr, en_attente, groupe)
     return Image.fromarray(arr)
 
 

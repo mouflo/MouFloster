@@ -311,6 +311,7 @@ def download_image(url: str):
 
 UPLOAD_DIR = os.path.join(OUTPUT_BASE, "_uploads")
 _UPLOAD_RE = re.compile(r"^[0-9a-f]{32}\.jpg$")
+_UPLOAD_PNG_RE = re.compile(r"^[0-9a-f]{32}\.png$")      # copie détourée (transparence gardée) d'une image envoyée : sert seulement au comblage
 UPLOAD_URL_PREFIX = "/api/upload/"
 UPLOAD_KEEP_DAYS = 7
 UPLOAD_MAX_SIDE = 4000                    # une image envoyée plus grande est réduite (assez pour un poster 1000x1500 zoomé)
@@ -338,7 +339,7 @@ def _clean_uploads():
     gardes = _uploads_gardes()
     try:
         for f in os.scandir(UPLOAD_DIR):
-            if f.is_file() and _UPLOAD_RE.match(f.name) and f.name not in gardes and _t.time() - f.stat().st_mtime > UPLOAD_KEEP_DAYS * 86400:
+            if f.is_file() and (_UPLOAD_RE.match(f.name) or _UPLOAD_PNG_RE.match(f.name)) and f.name not in gardes and _t.time() - f.stat().st_mtime > UPLOAD_KEEP_DAYS * 86400:
                 os.unlink(f.path)
                 n += 1
     except OSError:
@@ -747,10 +748,13 @@ def api_upload():
         img = Image.open(f.stream)
         img.load()
         img = ImageOps.exif_transpose(img)
+        detoure = None
         if img.mode in ("RGBA", "LA", "P"):
             rgba = img.convert("RGBA")
             bg = Image.new("RGB", rgba.size, "white")
             bg.paste(rgba, mask=rgba.split()[3])
+            if (np.asarray(rgba.split()[3]) < 250).mean() > 0.01:      # vraie transparence (personnage détouré…) : on la garde à part
+                detoure = rgba
             img = bg
         else:
             img = img.convert("RGB")
@@ -760,10 +764,14 @@ def api_upload():
         return jsonify({"error": "Image trop petite"}), 400
     if max(img.size) > UPLOAD_MAX_SIDE:
         img.thumbnail((UPLOAD_MAX_SIDE, UPLOAD_MAX_SIDE), Image.LANCZOS)
+        if detoure is not None:
+            detoure.thumbnail((UPLOAD_MAX_SIDE, UPLOAD_MAX_SIDE), Image.LANCZOS)
 
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     name = uuid.uuid4().hex + ".jpg"
     img.save(os.path.join(UPLOAD_DIR, name), quality=95)
+    if detoure is not None:
+        detoure.save(os.path.join(UPLOAD_DIR, name[:-4] + ".png"))
     logger.info(f"⬆️ Upload: {name} ({img.width}x{img.height})")
     return jsonify({"url": UPLOAD_URL_PREFIX + name, "w": img.width, "h": img.height})
 
@@ -776,6 +784,25 @@ def api_upload_file(name):
     if not os.path.isfile(path):
         return jsonify({"error": "Fichier introuvable"}), 404
     return send_file(path, mimetype="image/jpeg")
+
+
+def _charger_detourage(url: str):
+    """Copie détourée (PNG avec transparence) d'une image envoyée, si elle en avait une ; sinon None."""
+    if not url.startswith(UPLOAD_URL_PREFIX):
+        return None
+    name = os.path.basename(url[len(UPLOAD_URL_PREFIX):])
+    if not _UPLOAD_RE.match(name):
+        return None
+    chemin = os.path.join(UPLOAD_DIR, name[:-4] + ".png")
+    if not os.path.isfile(chemin):
+        return None
+    try:
+        img = Image.open(chemin)
+        img.load()
+        return img.convert("RGBA")
+    except Exception as e:
+        logger.error(f"Erreur lecture détourage: {e}")
+        return None
 
 
 def _masque_du_trace(mask_img: Image.Image, size, grossir=True):
@@ -888,7 +915,7 @@ def _agrandir_avec_decor(img: Image.Image, pads):
     masque = np.full(large.shape[:2], 255, np.uint8)
     masque[h:h + sh, g:g + sw] = 0
     t0 = time.time()
-    rempli = lama.inpaint(Image.fromarray(large), masque)
+    rempli = lama.inpaint(Image.fromarray(large), masque, grouper=False)       # bandes ajoutées : une seule fenêtre, grand contexte (comme avant)
     logger.info(f"✨ Décor inventé par LaMa en {time.time() - t0:.1f} s ({sw}x{sh} → {large.shape[1]}x{large.shape[0]})")
     sortie = np.asarray(rempli.convert("RGB")).copy()
     sortie[h:h + sh, g:g + sw] = arr
@@ -994,14 +1021,14 @@ def api_erase_combler():
     if not mask_data.startswith("data:image/png;base64,") or len(mask_data) > 20_000_000:
         return jsonify({"error": "Tracé invalide"}), 400
     poster = load_source_image(data.get("poster_url") or "", "original")
-    source = load_source_image(data.get("source_url") or "", "original")
+    source = _charger_detourage(data.get("source_url") or "") or load_source_image(data.get("source_url") or "", "original")
     if not poster or not source:
         return jsonify({"error": "Impossible de charger l'une des deux images"}), 400
     try:
         poster = poster.convert("RGB")
         if max(poster.size) > 4500:
             poster.thumbnail((4500, 4500))
-        source = source.convert("RGB")
+        source = source.convert("RGBA" if source.mode == "RGBA" else "RGB")      # un détourage garde sa transparence : seul le dessin compte
         source.thumbnail((3200, 3200))
         mask_img = Image.open(BytesIO(base64.b64decode(mask_data.split(",", 1)[1])))
         masque = _masque_du_trace(mask_img, poster.size)
